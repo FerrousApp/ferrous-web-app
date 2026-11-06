@@ -47,7 +47,7 @@ export function Earn() {
         return;
       }
 
-      // FIX: Strict Minimum Deposit Validation Check
+      // Strict Minimum Deposit Validation Check
       const minDepositUsd = activeAsset.minimum_deposit_usd || 0;
 
       if (currency === "USD" && amountNum < minDepositUsd) {
@@ -229,7 +229,24 @@ export function Earn() {
                   )}
                 </p>
               </div>
-              <div className="col-span-2 bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
+
+              {/* NEW: Live Token Price Field */}
+              <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
+                <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
+                  Token Price
+                </span>
+                <p className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate text-primary">
+                  ~$
+                  {activeAsset.live_pricing?.cost_in_usd
+                    ? parseFloat(activeAsset.live_pricing.cost_in_usd).toFixed(
+                        3,
+                      )
+                    : "1.00"}{" "}
+                  USD
+                </p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Protocol Fees
                 </span>
