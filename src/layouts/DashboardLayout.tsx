@@ -34,9 +34,15 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               />
             </div>
             <div className="hidden xl:flex flex-col overflow-hidden">
-              <span className="font-headline-sm text-headline-sm tracking-tight text-on-surface font-bold">
-                Ferrous
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-headline-sm text-headline-sm tracking-tight text-on-surface font-bold">
+                  Ferrous
+                </span>
+                {/* BETA BADGE (Desktop) */}
+                <span className="bg-primary-container text-on-primary-container border border-primary/20 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shadow-sm">
+                  Beta
+                </span>
+              </div>
               <span className="font-label-sm text-label-sm uppercase tracking-wider text-primary font-bold">
                 DeFi Capital
               </span>
@@ -80,9 +86,15 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                   className="w-full h-full object-contain"
                 />
               </div>
-              <span className="font-headline-sm text-headline-sm text-on-surface font-bold">
-                Ferrous
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-headline-sm text-headline-sm text-on-surface font-bold">
+                  Ferrous
+                </span>
+                {/* BETA BADGE (Mobile) */}
+                <span className="bg-primary-container text-on-primary-container border border-primary/20 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shadow-sm">
+                  Beta
+                </span>
+              </div>
             </div>
 
             <div className="hidden md:block"></div>
