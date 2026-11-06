@@ -218,7 +218,7 @@ export function Settings() {
               </button>
             ))}
 
-            <div className="flex flex-col xl:flex-row xl:items-center justify-between px-4 py-3.5 rounded-2xl bg-stone-200/40 text-stone-900 select-none gap-1 xl:gap-3">
+            <div className="flex flex-wrap items-center justify-between px-4 py-3.5 rounded-2xl bg-stone-200/40 text-stone-900 select-none gap-2">
               <div className="flex items-center gap-3 shrink-0">
                 <span className="material-symbols-outlined text-[20px] text-stone-900">
                   payments
@@ -227,12 +227,12 @@ export function Settings() {
                   Transaction Limit
                 </span>
               </div>
-              <span className="text-xs font-bold text-stone-500 xl:text-right">
+              <span className="text-xs font-bold text-stone-500 xl:text-right mt-1 xl:mt-0">
                 10,000 USD
               </span>
             </div>
 
-            <div className="flex flex-col xl:flex-row xl:items-center justify-between px-4 py-3.5 rounded-2xl bg-stone-200/40 text-stone-900 select-none gap-1 xl:gap-3">
+            <div className="flex flex-wrap items-center justify-between px-4 py-3.5 rounded-2xl bg-stone-200/40 text-stone-900 select-none gap-2">
               <div className="flex items-center gap-3 shrink-0">
                 <span className="material-symbols-outlined text-[20px] text-stone-900">
                   currency_exchange
@@ -241,7 +241,7 @@ export function Settings() {
                   Global Rate
                 </span>
               </div>
-              <span className="text-xs font-bold text-stone-500 tracking-tight xl:text-right">
+              <span className="text-xs font-bold text-stone-500 tracking-tight xl:text-right mt-1 xl:mt-0">
                 1USD - {exchangeRate.toLocaleString()}N
               </span>
             </div>
