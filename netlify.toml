@@ -1,0 +1,15 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# 1. React Router SPA Fix (Prevents 404s on direct URL navigation)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# 2. Custom CSP (Blocks Netlify Badge, Allows Firebase)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "script-src 'self' https://*.firebaseapp.com https://*.googleapis.com https://*.gstatic.com;"
