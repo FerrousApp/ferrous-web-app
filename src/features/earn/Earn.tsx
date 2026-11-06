@@ -238,9 +238,7 @@ export function Earn() {
                 <p className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate text-primary">
                   ~$
                   {activeAsset.live_pricing?.cost_in_usd
-                    ? parseFloat(activeAsset.live_pricing.cost_in_usd).toFixed(
-                        3,
-                      )
+                    ? Number(activeAsset.live_pricing.cost_in_usd).toFixed(3)
                     : "1.00"}{" "}
                   USD
                 </p>
