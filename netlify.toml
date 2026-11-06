@@ -12,4 +12,4 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    Content-Security-Policy = "script-src 'self' https://*.firebaseapp.com https://*.googleapis.com https://*.gstatic.com;"
+    Content-Security-Policy = "script-src 'self' https://*.firebaseapp.com https://*.googleapis.com https://*.gstatic.com https://*.google.com https://apis.google.com;"
