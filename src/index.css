@@ -1,2 +1,12 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
+
+/* Force-hide the Netlify injection badge */
+#netlify-badge,
+.netlify-badge,
+a[href^="https://www.netlify.com"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
