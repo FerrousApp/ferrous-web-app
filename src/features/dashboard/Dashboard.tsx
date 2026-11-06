@@ -47,7 +47,7 @@ export function Dashboard() {
   const { data: txData } = useTransactions();
 
   useEffect(() => {
-    const livePricing = allAssets?.[0]?.live_pricing as
+    const livePricing = allAssets?.[0]?.live_pricing as unknown as
       | Record<string, unknown>
       | undefined;
     const rate = livePricing?.fiat_exchange_rate_with_usd;

@@ -54,7 +54,10 @@ export function Transfers() {
   );
   const step4Active = granularStatus === "success";
 
-  const profile = user as Record<string, string | boolean | undefined> | null;
+  const profile = user as unknown as Record<
+    string,
+    string | boolean | undefined
+  > | null;
   const isVerified =
     profile?.kyc_status === "verified" || profile?.is_verified === true;
 

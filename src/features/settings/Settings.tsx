@@ -42,7 +42,9 @@ export function Settings() {
   const [editedProfile, setEditedProfile] =
     useState<UpdateProfilePayload | null>(null);
 
-  const profile = userProfile as Record<string, string | undefined> | undefined;
+  const profile = userProfile as unknown as
+    | Record<string, string | undefined>
+    | undefined;
 
   const profileForm: UpdateProfilePayload = editedProfile || {
     first_name: profile?.first_name || profile?.firstName || "",

@@ -24,7 +24,10 @@ export function Earn() {
   const activeAsset: EarnAsset | undefined =
     assets?.find((a) => a.id === selectedAssetId) || assets?.[0];
 
-  const profile = user as Record<string, string | boolean | undefined> | null;
+  const profile = user as unknown as Record<
+    string,
+    string | boolean | undefined
+  > | null;
   const isVerified =
     profile?.kyc_status === "verified" || profile?.is_verified === true;
 
