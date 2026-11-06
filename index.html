@@ -19,3 +19,19 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+
+<script>
+  // Watch the DOM and instantly destroy the Netlify badge when it appears
+  const observer = new MutationObserver((mutations) => {
+    const badge = document.querySelector(
+      '[id*="netlify-badge"], [class*="netlify-badge"], netlify-badge',
+    );
+    if (badge) {
+      badge.remove();
+      observer.disconnect(); // Stop observing once it is deleted
+    }
+  });
+
+  // Start observing the body for injected elements
+  observer.observe(document.body, { childList: true, subtree: true });
+</script>
