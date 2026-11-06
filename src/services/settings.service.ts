@@ -28,7 +28,11 @@ const settingsApi = {
     formData.append("selfie_image", selfieImage);
     formData.append("payload", JSON.stringify(payload));
 
-    return await apiClient.post("/kyc/submit", formData);
+    return await apiClient.post("/kyc/submit", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
   },
 };
 
