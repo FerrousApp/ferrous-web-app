@@ -1,6 +1,7 @@
 // src/features/settings/Settings.tsx
 import { useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import imageCompression from "browser-image-compression";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
 import {
   useSubmitKyc,
@@ -9,14 +10,14 @@ import {
 } from "../../services/settings.service";
 import { authService } from "../../services/auth.service";
 import { useUIStore } from "../../store/uiStore";
-import { useAuthStore } from "../../store/authStore"; // FIX: Added useAuthStore import
+import { useAuthStore } from "../../store/authStore";
 import type { KycPayload, UpdateProfilePayload } from "../../types/settings";
 
 type TabId = "profile" | "verification" | "referrals";
 
 export function Settings() {
   const { exchangeRate } = useUIStore();
-  const { user } = useAuthStore(); // FIX: Extracted user from auth store
+  const { user } = useAuthStore();
   const location = useLocation();
 
   const getInitialTab = (): TabId => {
@@ -57,6 +58,7 @@ export function Settings() {
 
   // KYC State Machine
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
+  const [kycError, setKycError] = useState<string | null>(null);
   const [kycForm, setKycForm] = useState<KycPayload>({
     first_name: "",
     last_name: "",
@@ -80,6 +82,7 @@ export function Settings() {
 
   // File Upload State
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -91,7 +94,7 @@ export function Settings() {
     kycForm.occupation.trim() &&
     kycForm.birth_date &&
     kycForm.phone.trim() &&
-    kycForm.bvn.trim().length === 11,
+    kycForm.bvn.trim().length === 11, // 11-digit strict mask
   );
 
   const handleKycNext = () => {
@@ -101,6 +104,7 @@ export function Settings() {
 
   const handleKycSubmit = async () => {
     if (!selfieFile || !termsAgreed) return;
+    setKycError(null);
     try {
       await submitKycMutation.mutateAsync({
         payload: kycForm,
@@ -108,6 +112,30 @@ export function Settings() {
       });
     } catch (error) {
       console.error("KYC Submission failed", error);
+
+      // Safely type cast the error object without triggering ESLint's 'any' rule
+      const err = error as {
+        response?: { data?: { message?: string } };
+        message?: string;
+      };
+
+      const errorMsg =
+        err?.response?.data?.message || err?.message || JSON.stringify(error);
+
+      // Handle duplicate identity from Busha
+      if (
+        errorMsg.toLowerCase().includes("duplicate") ||
+        errorMsg.toLowerCase().includes("exists in busha")
+      ) {
+        setKycError(
+          "This ID is already registered in the compliance network. Please contact support.",
+        );
+      } else {
+        setKycError(
+          errorMsg ||
+            "An error occurred during verification submission. Please try again.",
+        );
+      }
     }
   };
 
@@ -124,15 +152,20 @@ export function Settings() {
 
   const handleLogout = async () => {
     try {
-      // FIX: Safely grab the real user ID instead of "current-user-id" without using 'any'
       const userId = user?.id || "current-user-id";
-
       await authService.signOut(userId);
       window.location.href = "/login";
     } catch (error) {
       console.error("Logout failed", error);
     }
   };
+
+  // Safe checks for KYC status
+  const kycStatus = profile?.kyc_status || profile?.kycStatus;
+  const kycRejectionReason =
+    profile?.busha_rejection_reason ||
+    profile?.kyc_rejection_reason ||
+    "Your verification was unsuccessful. Please review your details and try again.";
 
   return (
     <DashboardLayout>
@@ -231,6 +264,21 @@ export function Settings() {
           {/* --- VERIFICATION TAB (KYC FLOW) --- */}
           {activeTab === "verification" && (
             <div className="max-w-2xl space-y-4">
+              {/* Display exact rejection reason if failed */}
+              {kycStatus === "failed" && (
+                <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-3xl flex items-start gap-3 shadow-sm">
+                  <span className="material-symbols-outlined text-[20px] shrink-0 mt-0.5">
+                    error
+                  </span>
+                  <div>
+                    <h4 className="font-bold text-sm">Verification Failed</h4>
+                    <p className="text-xs mt-1 leading-relaxed">
+                      {kycRejectionReason}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-white/80 backdrop-blur-sm border border-black/5 rounded-3xl p-4 flex items-center justify-between shadow-sm">
                 <div className="flex items-center justify-between w-full">
                   <div className="flex items-center gap-2">
@@ -330,6 +378,7 @@ export function Settings() {
                         <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                           BVN (11 Digits)
                         </label>
+                        {/* BVN Input Masking */}
                         <input
                           type="text"
                           value={kycForm.bvn}
@@ -403,6 +452,7 @@ export function Settings() {
                       <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                         NIN Number
                       </label>
+                      {/* NIN Input Masking */}
                       <input
                         type="text"
                         maxLength={11}
@@ -420,31 +470,60 @@ export function Settings() {
                       />
                     </div>
 
+                    {/* Client-Side Image Compression */}
                     <input
                       type="file"
                       ref={fileInputRef}
                       className="hidden"
                       accept="image/png, image/jpeg, image/webp"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0])
-                          setSelfieFile(e.target.files[0]);
+                      onChange={async (e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setIsCompressing(true);
+                          try {
+                            const file = e.target.files[0];
+                            const compressedFile = await imageCompression(
+                              file,
+                              {
+                                maxSizeMB: 2.8, // strict 3MB limit fallback
+                                maxWidthOrHeight: 1920,
+                                useWebWorker: true,
+                              },
+                            );
+                            setSelfieFile(compressedFile);
+                          } catch (error) {
+                            console.error("Image compression failed", error);
+                            setSelfieFile(e.target.files[0]); // fallback
+                          } finally {
+                            setIsCompressing(false);
+                          }
+                        }
                       }}
                     />
 
                     <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-6 rounded-2xl border-2 border-dashed border-stone-300/80 bg-stone-50/60 text-center space-y-2 cursor-pointer hover:bg-stone-100 transition-colors"
+                      onClick={() =>
+                        !isCompressing && fileInputRef.current?.click()
+                      }
+                      className={`p-6 rounded-2xl border-2 border-dashed ${isCompressing ? "border-primary/50 bg-primary/5" : "border-stone-300/80 bg-stone-50/60 hover:bg-stone-100"} text-center space-y-2 cursor-pointer transition-colors`}
                     >
-                      <span className="material-symbols-outlined text-[32px] text-stone-400">
-                        add_a_photo
-                      </span>
+                      {isCompressing ? (
+                        <span className="material-symbols-outlined text-[32px] text-primary animate-spin">
+                          progress_activity
+                        </span>
+                      ) : (
+                        <span className="material-symbols-outlined text-[32px] text-stone-400">
+                          add_a_photo
+                        </span>
+                      )}
                       <div className="text-xs font-bold text-stone-800">
-                        {selfieFile
-                          ? selfieFile.name
-                          : "Click to Upload Selfie Photo"}
+                        {isCompressing
+                          ? "Compressing Image..."
+                          : selfieFile
+                            ? selfieFile.name
+                            : "Click to Upload Selfie Photo"}
                       </div>
                       <p className="text-[11px] text-stone-500">
-                        JPG, PNG or WebP (max 10MB)
+                        Will be automatically compressed under 3MB
                       </p>
                     </div>
 
@@ -459,6 +538,7 @@ export function Settings() {
                         onClick={handleKycNext}
                         disabled={
                           !selfieFile ||
+                          isCompressing ||
                           kycForm.identifying_information[0].number.length !==
                             11
                         }
@@ -487,6 +567,12 @@ export function Settings() {
                       </p>
                     </div>
 
+                    {kycError && (
+                      <div className="p-4 rounded-2xl bg-red-50 text-red-700 text-xs border border-red-200 mt-2 text-center font-semibold">
+                        {kycError}
+                      </div>
+                    )}
+
                     <div className="pt-2 flex items-start gap-3">
                       <input
                         checked={termsAgreed}
@@ -509,20 +595,30 @@ export function Settings() {
                     <div className="flex gap-3 pt-4">
                       <button
                         onClick={() => setKycStep(2)}
-                        className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer"
+                        disabled={submitKycMutation.isPending}
+                        className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Back
                       </button>
+
+                      {/* Button Disabling & Loading Spinner */}
                       <button
                         onClick={handleKycSubmit}
                         disabled={!termsAgreed || submitKycMutation.isPending}
-                        className="flex-1 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        className="flex-1 flex items-center justify-center gap-2 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
-                        {submitKycMutation.isPending
-                          ? "Submitting..."
-                          : submitKycMutation.isSuccess
-                            ? "KYC Submitted Successfully ✓"
-                            : "Submit KYC"}
+                        {submitKycMutation.isPending ? (
+                          <>
+                            <span className="material-symbols-outlined animate-spin text-[18px]">
+                              progress_activity
+                            </span>
+                            Submitting...
+                          </>
+                        ) : submitKycMutation.isSuccess ? (
+                          "KYC Submitted Successfully ✓"
+                        ) : (
+                          "Submit KYC"
+                        )}
                       </button>
                     </div>
                   </div>
