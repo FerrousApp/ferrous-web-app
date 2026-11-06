@@ -19,35 +19,3 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
-<script>
-  (function () {
-    function huntAndDestroy() {
-      // Broad selectors to catch the badge, even if Netlify renames the ID or uses an iframe
-      const badge = document.querySelector(
-        'netlify-badge, [id*="netlify-badge"], [class*="netlify-badge"], a[href*="netlify.com/?utm_campaign"]',
-      );
-
-      if (badge) {
-        // If the badge is wrapped in a floating container, delete the parent container too
-        const wrapper =
-          badge.closest('div[style*="fixed"], div[style*="absolute"]') || badge;
-        wrapper.remove();
-        return true;
-      }
-      return false;
-    }
-
-    // 1. Try instantly (catches server-side edge injection)
-    if (huntAndDestroy()) return;
-
-    // 2. Poll rapidly (catches delayed client-side script injection)
-    let attempts = 0;
-    const interval = setInterval(() => {
-      // Check every 50ms, give up after 4 seconds (80 attempts)
-      if (huntAndDestroy() || attempts++ > 80) {
-        clearInterval(interval);
-      }
-    }, 50);
-  })();
-</script>
