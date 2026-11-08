@@ -11,7 +11,7 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set) => ({
   currency: "NGN",
-  exchangeRate: 1457, // Safe default fallback
+  exchangeRate: 0, // Safe default fallback
   setCurrency: (currency) => set({ currency }),
   toggleCurrency: (currency) => set({ currency }), // Mirrors setCurrency logic
   setExchangeRate: (exchangeRate) => set({ exchangeRate }),

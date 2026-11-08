@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { useUIStore } from "../store/uiStore";
+import { useEarnAssets } from "../services/earn.service";
 import ferrousIcon from "../assets/ferrous-icon.svg";
 
 const NAV_ITEMS = [
@@ -16,6 +17,10 @@ const NAV_ITEMS = [
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const { user } = useAuthStore();
   const { currency, toggleCurrency } = useUIStore();
+
+  // Silently pre-fetch earn assets on app load to initialize the global exchange rate in Zustand.
+  // React Query will cache this request and prevent duplication when the user navigates to the Earn tab.
+  useEarnAssets();
 
   const firstName = user?.first_name || user?.firstName || user?.name || "User";
   const initial = firstName.charAt(0).toUpperCase();

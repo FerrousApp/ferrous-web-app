@@ -201,21 +201,6 @@ export function Earn() {
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
-                  Volume (24h)
-                </span>
-                <p
-                  className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate"
-                  title={formatMoney(
-                    activeAsset.protocol_details?.volume_24h_usd || 0,
-                  )}
-                >
-                  {formatCompactMoney(
-                    activeAsset.protocol_details?.volume_24h_usd || 0,
-                  )}
-                </p>
-              </div>
-              <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
-                <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   TVL
                 </span>
                 <p
@@ -230,21 +215,21 @@ export function Earn() {
                 </p>
               </div>
 
-              {/* NEW: Live Token Price Field */}
+              {/* FIX: Dynamic USD/NGN Price Toggle */}
               <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
-                  Token Price
+                  Token Price ({currency})
                 </span>
                 <p className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate text-primary">
-                  ~$
-                  {activeAsset.live_pricing?.cost_in_usd
-                    ? Number(activeAsset.live_pricing.cost_in_usd).toFixed(3)
-                    : "1.00"}{" "}
-                  USD
+                  ~
+                  {currency === "NGN"
+                    ? `₦${(Number(activeAsset.live_pricing?.cost_in_usd || 1) * currentRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+                    : `$${Number(activeAsset.live_pricing?.cost_in_usd || 1).toFixed(3)}`}
                 </p>
               </div>
 
-              <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
+              {/* FIX: Expanded to col-span-2 to keep the grid perfectly aligned after deleting the Volume card */}
+              <div className="col-span-2 bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Protocol Fees
                 </span>

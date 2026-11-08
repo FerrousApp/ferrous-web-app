@@ -1,6 +1,7 @@
 // src/services/earn.service.ts
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
+import { useUIStore } from "../store/uiStore";
 import type {
   EarnAsset,
   InvestmentQuotePayload,
@@ -15,6 +16,15 @@ const earnApi = {
     const res = await apiClient.get<unknown, unknown>("/market/assets");
     const root = res as Record<string, unknown>;
     const data1 = root?.data as Record<string, unknown> | undefined;
+
+    // FIX: Safely check both the root response AND the nested Axios data object for 'meta'
+    const meta = (root?.meta || data1?.meta) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (meta?.global_usd_ngn_rate) {
+      useUIStore.getState().setExchangeRate(Number(meta.global_usd_ngn_rate));
+    }
 
     if (Array.isArray(res)) return res as EarnAsset[];
     if (Array.isArray(root?.data)) return root.data as EarnAsset[];
