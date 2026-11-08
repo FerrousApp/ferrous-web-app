@@ -15,6 +15,69 @@ import type { KycPayload, UpdateProfilePayload } from "../../types/settings";
 
 type TabId = "profile" | "verification" | "referrals";
 
+const COMMON_OCCUPATIONS = [
+  "Accountant",
+  "Actor",
+  "Architect",
+  "Artist",
+  "Business Analyst",
+  "Business Owner",
+  "Carpenter",
+  "Chef",
+  "Civil Engineer",
+  "Consultant",
+  "Content Creator",
+  "Customer Service",
+  "Data Analyst",
+  "Data Scientist",
+  "Dentist",
+  "Designer",
+  "Digital Marketer",
+  "Doctor",
+  "Economist",
+  "Electrician",
+  "Entrepreneur",
+  "Event Planner",
+  "Financial Advisor",
+  "Financial Analyst",
+  "Firefighter",
+  "Freelancer",
+  "Graphic Designer",
+  "Human Resources",
+  "Investment Banker",
+  "Journalist",
+  "Lawyer",
+  "Logistics Manager",
+  "Marketing Specialist",
+  "Mechanic",
+  "Mechanical Engineer",
+  "Musician",
+  "Nurse",
+  "Operations Manager",
+  "Pharmacist",
+  "Photographer",
+  "Pilot",
+  "Plumber",
+  "Police Officer",
+  "Product Manager",
+  "Project Manager",
+  "Psychologist",
+  "Real Estate Agent",
+  "Researcher",
+  "Retail Manager",
+  "Sales Representative",
+  "Social Media Manager",
+  "Software Engineer",
+  "Student",
+  "Teacher / Educator",
+  "Trader",
+  "UI/UX Designer",
+  "Veterinarian",
+  "Videographer",
+  "Web Developer",
+  "Writer",
+];
+
 export function Settings() {
   const { exchangeRate } = useUIStore();
   const { user } = useAuthStore();
@@ -46,6 +109,18 @@ export function Settings() {
   const profile = userProfile as unknown as
     | Record<string, string | undefined>
     | undefined;
+
+  // Extract Name from Auth Store for Placeholders
+  const fallbackFirstName =
+    user?.first_name ||
+    user?.firstName ||
+    user?.name?.split(" ")[0] ||
+    "Paschal";
+  const authNameParts = user?.name?.split(" ") || [];
+  const fallbackLastName =
+    user?.last_name ||
+    user?.lastName ||
+    (authNameParts.length > 1 ? authNameParts.slice(1).join(" ") : "Ekemere");
 
   const profileForm: UpdateProfilePayload = editedProfile || {
     first_name: profile?.first_name || profile?.firstName || "",
@@ -79,6 +154,12 @@ export function Settings() {
       { type: "national-id", number: "", country: "NG" },
     ],
   });
+
+  // Searchable Occupation Dropdown State
+  const [showOccDropdown, setShowOccDropdown] = useState(false);
+  const filteredOccupations = COMMON_OCCUPATIONS.filter((occ) =>
+    occ.toLowerCase().includes(kycForm.occupation.toLowerCase()),
+  );
 
   // File Upload State
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
@@ -334,7 +415,7 @@ export function Settings() {
                             })
                           }
                           className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="Joshua"
+                          placeholder={fallbackFirstName}
                         />
                       </div>
                       <div>
@@ -351,19 +432,23 @@ export function Settings() {
                             })
                           }
                           className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="JohnJunior"
+                          placeholder={fallbackLastName}
                         />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
+                      <div className="relative">
                         <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                           Occupation
                         </label>
                         <input
                           type="text"
                           value={kycForm.occupation}
+                          onFocus={() => setShowOccDropdown(true)}
+                          onBlur={() =>
+                            setTimeout(() => setShowOccDropdown(false), 200)
+                          }
                           onChange={(e) =>
                             setKycForm({
                               ...kycForm,
@@ -371,9 +456,34 @@ export function Settings() {
                             })
                           }
                           className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="Software Engineer"
+                          placeholder="Select or enter occupation"
                         />
+
+                        {/* Searchable Combobox Dropdown Menu */}
+                        {showOccDropdown && (
+                          <div className="absolute z-50 w-full mt-2 bg-white border border-stone-200 rounded-2xl shadow-xl max-h-52 overflow-y-auto py-2">
+                            {filteredOccupations.length > 0 ? (
+                              filteredOccupations.map((occ) => (
+                                <div
+                                  key={occ}
+                                  onClick={() => {
+                                    setKycForm({ ...kycForm, occupation: occ });
+                                    setShowOccDropdown(false);
+                                  }}
+                                  className="px-4 py-2.5 text-sm font-bold text-stone-700 hover:bg-stone-100 hover:text-primary cursor-pointer transition-colors"
+                                >
+                                  {occ}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="px-4 py-3 text-xs font-bold text-stone-500">
+                                Use "{kycForm.occupation}"
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
+
                       <div>
                         <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                           BVN (11 Digits)
