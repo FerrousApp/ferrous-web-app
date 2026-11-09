@@ -81,18 +81,19 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       {/* Main Content Area */}
       <div className="md:pl-24 xl:pl-72 flex flex-col min-h-screen relative">
         {/* Top Header */}
-        <header className="sticky top-0 z-30 w-full px-gutter-mobile md:px-gutter py-space-sm md:py-space-md">
-          <div className="h-16 w-full max-w-7xl mx-auto bg-surface-container-lowest/90 backdrop-blur-xl rounded-full shadow-[0_4px_20px_-2px_rgba(110,95,70,0.05)] px-space-md md:px-space-lg flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 md:hidden">
-              <div className="w-8 h-8 bg-primary-container rounded-xl flex items-center justify-center shadow-sm overflow-hidden p-1">
+        <header className="sticky top-0 z-30 w-full px-3 md:px-gutter py-space-sm md:py-space-md">
+          <div className="h-16 w-full max-w-7xl mx-auto bg-surface-container-lowest/90 backdrop-blur-xl rounded-full shadow-[0_4px_20px_-2px_rgba(110,95,70,0.05)] px-3 sm:px-6 flex items-center justify-between gap-1 sm:gap-2">
+            {/* Mobile Logo Block - Responsive Scaling Applied */}
+            <div className="flex items-center gap-2 sm:gap-3 md:hidden shrink-0">
+              <div className="w-8 h-8 bg-primary-container rounded-xl flex items-center justify-center shadow-sm overflow-hidden p-1 shrink-0">
                 <img
                   src={ferrousIcon}
                   alt="Ferrous Logo"
                   className="w-full h-full object-contain"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="font-headline-sm text-headline-sm text-on-surface font-bold">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="text-base sm:text-lg text-on-surface font-bold tracking-tight">
                   Ferrous
                 </span>
                 {/* BETA BADGE (Mobile) */}
@@ -103,18 +104,20 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             </div>
 
             <div className="hidden md:block"></div>
-            <div className="flex items-center gap-space-sm md:gap-space-md ml-auto">
+
+            {/* Mobile Actions Block - Gap Constraints Applied */}
+            <div className="flex items-center gap-1.5 sm:gap-4 ml-auto shrink-0">
               {/* Currency Toggle */}
-              <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-full">
+              <div className="flex items-center gap-0.5 sm:gap-1 bg-surface-container-low p-1 rounded-full shrink-0">
                 <button
                   onClick={() => toggleCurrency("NGN")}
-                  className={`px-3 py-1 rounded-full font-label-sm text-label-sm font-bold transition-all ${currency === "NGN" ? "bg-surface-container-lowest text-on-surface shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
+                  className={`px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-bold transition-all ${currency === "NGN" ? "bg-surface-container-lowest text-on-surface shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
                 >
                   NGN
                 </button>
                 <button
                   onClick={() => toggleCurrency("USD")}
-                  className={`px-3 py-1 rounded-full font-label-sm text-label-sm font-bold transition-all ${currency === "USD" ? "bg-surface-container-lowest text-on-surface shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
+                  className={`px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-bold transition-all ${currency === "USD" ? "bg-surface-container-lowest text-on-surface shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
                 >
                   USD
                 </button>
@@ -123,7 +126,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               {/* User Profile Pill */}
               <Link
                 to="/settings?tab=profile"
-                className="flex items-center gap-3 pl-2 py-1 pr-1.5 rounded-full bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer"
+                className="flex items-center gap-2 sm:gap-3 pl-1 sm:pl-2 py-1 pr-1 sm:pr-1.5 rounded-full bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer shrink-0"
               >
                 <div className="hidden sm:flex flex-col text-right leading-none">
                   <span className="font-label-md text-label-md text-on-surface capitalize">
@@ -133,7 +136,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                     {user?.email}
                   </span>
                 </div>
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-bold shadow-sm ring-2 ring-primary-container/40">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-primary flex items-center justify-center text-white text-sm font-bold shadow-sm ring-2 ring-primary-container/40 shrink-0">
                   {initial}
                 </div>
               </Link>

@@ -135,6 +135,8 @@ export function Settings() {
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
   const [kycError, setKycError] = useState<string | null>(null);
   const [kycForm, setKycForm] = useState<KycPayload>({
+    type: "individual",
+    email: user?.email || "",
     first_name: "",
     last_name: "",
     middle_name: "",
@@ -152,7 +154,9 @@ export function Settings() {
     bvn: "",
     identifying_information: [
       { type: "national-id", number: "", country: "NG" },
+      { type: "selfie", country: "NG" },
     ],
+    has_accepted_terms: false,
   });
 
   // Searchable Occupation Dropdown State
@@ -175,7 +179,10 @@ export function Settings() {
     kycForm.occupation.trim() &&
     kycForm.birth_date &&
     kycForm.phone.trim() &&
-    kycForm.bvn.trim().length === 11, // 11-digit strict mask
+    kycForm.bvn.trim().length === 11 &&
+    kycForm.address.address_line_1.trim() &&
+    kycForm.address.city.trim() &&
+    kycForm.address.state.trim(),
   );
 
   const handleKycNext = () => {
@@ -188,13 +195,15 @@ export function Settings() {
     setKycError(null);
     try {
       await submitKycMutation.mutateAsync({
-        payload: kycForm,
+        payload: {
+          ...kycForm,
+          has_accepted_terms: termsAgreed,
+        },
         selfieImage: selfieFile,
       });
     } catch (error) {
       console.error("KYC Submission failed", error);
 
-      // Safely type cast the error object without triggering ESLint's 'any' rule
       const err = error as {
         response?: { data?: { message?: string } };
         message?: string;
@@ -203,7 +212,6 @@ export function Settings() {
       const errorMsg =
         err?.response?.data?.message || err?.message || JSON.stringify(error);
 
-      // Handle duplicate identity from Busha
       if (
         errorMsg.toLowerCase().includes("duplicate") ||
         errorMsg.toLowerCase().includes("exists in busha")
@@ -241,7 +249,6 @@ export function Settings() {
     }
   };
 
-  // Safe checks for KYC status
   const kycStatus = profile?.kyc_status || profile?.kycStatus;
   const kycRejectionReason =
     profile?.busha_rejection_reason ||
@@ -345,7 +352,6 @@ export function Settings() {
           {/* --- VERIFICATION TAB (KYC FLOW) --- */}
           {activeTab === "verification" && (
             <div className="max-w-2xl space-y-4">
-              {/* Display exact rejection reason if failed */}
               {kycStatus === "failed" && (
                 <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-3xl flex items-start gap-3 shadow-sm">
                   <span className="material-symbols-outlined text-[20px] shrink-0 mt-0.5">
@@ -459,7 +465,6 @@ export function Settings() {
                           placeholder="Select or enter occupation"
                         />
 
-                        {/* Searchable Combobox Dropdown Menu */}
                         {showOccDropdown && (
                           <div className="absolute z-50 w-full mt-2 bg-white border border-stone-200 rounded-2xl shadow-xl max-h-52 overflow-y-auto py-2">
                             {filteredOccupations.length > 0 ? (
@@ -488,7 +493,6 @@ export function Settings() {
                         <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                           BVN (11 Digits)
                         </label>
-                        {/* BVN Input Masking */}
                         <input
                           type="text"
                           value={kycForm.bvn}
@@ -537,6 +541,77 @@ export function Settings() {
                         />
                       </div>
                     </div>
+
+                    <div className="pt-4 border-t border-stone-200/60 mt-4">
+                      <h4 className="text-[11px] font-bold text-stone-500 uppercase mb-3">
+                        Residential Address
+                      </h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                            Street Address
+                          </label>
+                          <input
+                            type="text"
+                            value={kycForm.address.address_line_1}
+                            onChange={(e) =>
+                              setKycForm({
+                                ...kycForm,
+                                address: {
+                                  ...kycForm.address,
+                                  address_line_1: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                            placeholder="123 Example Street"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              City
+                            </label>
+                            <input
+                              type="text"
+                              value={kycForm.address.city}
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  address: {
+                                    ...kycForm.address,
+                                    city: e.target.value,
+                                  },
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                              placeholder="Lagos"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              State
+                            </label>
+                            <input
+                              type="text"
+                              value={kycForm.address.state}
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  address: {
+                                    ...kycForm.address,
+                                    state: e.target.value,
+                                  },
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                              placeholder="Lagos"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <button
                       onClick={handleKycNext}
                       disabled={!isStep1Valid}
@@ -562,14 +637,28 @@ export function Settings() {
                       <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                         NIN Number
                       </label>
-                      {/* NIN Input Masking */}
+                      {/* FIX: TS Error resolved by Type Guarding before extracting .number */}
                       <input
                         type="text"
                         maxLength={11}
-                        value={kycForm.identifying_information[0].number}
+                        value={
+                          kycForm.identifying_information[0].type ===
+                          "national-id"
+                            ? kycForm.identifying_information[0].number
+                            : ""
+                        }
                         onChange={(e) => {
                           const newInfo = [...kycForm.identifying_information];
-                          newInfo[0].number = e.target.value.replace(/\D/g, "");
+                          const firstItem = newInfo[0];
+
+                          // FIX: TS Error resolved by Type Guarding before assigning .number
+                          if (firstItem.type === "national-id") {
+                            firstItem.number = e.target.value.replace(
+                              /\D/g,
+                              "",
+                            );
+                          }
+
                           setKycForm({
                             ...kycForm,
                             identifying_information: newInfo,
@@ -580,7 +669,6 @@ export function Settings() {
                       />
                     </div>
 
-                    {/* Client-Side Image Compression */}
                     <input
                       type="file"
                       ref={fileInputRef}
@@ -594,7 +682,7 @@ export function Settings() {
                             const compressedFile = await imageCompression(
                               file,
                               {
-                                maxSizeMB: 2.8, // strict 3MB limit fallback
+                                maxSizeMB: 2.8,
                                 maxWidthOrHeight: 1920,
                                 useWebWorker: true,
                               },
@@ -602,7 +690,7 @@ export function Settings() {
                             setSelfieFile(compressedFile);
                           } catch (error) {
                             console.error("Image compression failed", error);
-                            setSelfieFile(e.target.files[0]); // fallback
+                            setSelfieFile(e.target.files[0]);
                           } finally {
                             setIsCompressing(false);
                           }
@@ -646,11 +734,14 @@ export function Settings() {
                       </button>
                       <button
                         onClick={handleKycNext}
+                        // FIX: Type Guarding .number for strict length validation
                         disabled={
                           !selfieFile ||
                           isCompressing ||
-                          kycForm.identifying_information[0].number.length !==
-                            11
+                          (kycForm.identifying_information[0].type ===
+                            "national-id" &&
+                            kycForm.identifying_information[0].number.length !==
+                              11)
                         }
                         className="flex-1 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
@@ -711,7 +802,6 @@ export function Settings() {
                         Back
                       </button>
 
-                      {/* Button Disabling & Loading Spinner */}
                       <button
                         onClick={handleKycSubmit}
                         disabled={!termsAgreed || submitKycMutation.isPending}
@@ -866,7 +956,7 @@ export function Settings() {
             </div>
           )}
 
-          {/* --- REFERRALS TAB (Blurred Out Shell per instructions) --- */}
+          {/* --- REFERRALS TAB --- */}
           {activeTab === "referrals" && (
             <div className="max-w-2xl bg-white/50 rounded-3xl p-8 border border-stone-200 text-center opacity-40 blur-[2px] select-none pointer-events-none">
               <span className="material-symbols-outlined text-4xl text-stone-400">

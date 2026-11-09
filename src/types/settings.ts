@@ -7,11 +7,9 @@ export interface UpdateProfilePayload {
   date_of_birth: string;
 }
 
-export interface IdentifyingInformation {
-  type: "national-id";
-  number: string;
-  country: string;
-}
+export type IdentifyingInformation =
+  | { type: "national-id"; number: string; country: string }
+  | { type: "selfie"; country: string };
 
 export interface Address {
   address_line_1: string;
@@ -22,6 +20,8 @@ export interface Address {
 }
 
 export interface KycPayload {
+  type: string; // e.g., "individual"
+  email: string;
   first_name: string;
   last_name: string;
   middle_name: string;
@@ -30,6 +30,7 @@ export interface KycPayload {
   occupation: string;
   country_id: string;
   address: Address;
-  bvn: string; // NEW: Added BVN to root payload
+  bvn: string;
   identifying_information: IdentifyingInformation[];
+  has_accepted_terms: boolean;
 }
