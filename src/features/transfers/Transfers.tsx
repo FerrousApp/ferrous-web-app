@@ -9,6 +9,7 @@ import {
   useWalletBalances,
   useTransactions,
 } from "../../services/dashboard.service";
+import { useProfile } from "../../services/settings.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
@@ -18,7 +19,14 @@ export function Transfers() {
   const navigate = useNavigate();
   const { currency, exchangeRate } = useUIStore();
   const { user } = useAuthStore();
-  const { data: dvaData, isLoading: dvaLoading } = useDepositAccount();
+
+  const { data: userProfile } = useProfile();
+  // FIX: Destructure isError to catch API failures separately
+  const {
+    data: dvaData,
+    isLoading: dvaLoading,
+    isError: dvaError,
+  } = useDepositAccount();
   const { data: balances } = useWalletBalances();
 
   const { data: txData } = useTransactions(10, 0);
@@ -54,12 +62,22 @@ export function Transfers() {
   );
   const step4Active = granularStatus === "success";
 
-  const profile = user as unknown as Record<
+  const storeProfile = user as unknown as Record<
     string,
     string | boolean | undefined
   > | null;
+  const liveProfile = userProfile as unknown as Record<
+    string,
+    string | boolean | undefined
+  > | null;
+
   const isVerified =
-    profile?.kyc_status === "verified" || profile?.is_verified === true;
+    liveProfile?.busha_status === "verified" ||
+    storeProfile?.busha_status === "verified" ||
+    liveProfile?.kyc_status === "verified" ||
+    storeProfile?.kyc_status === "verified" ||
+    liveProfile?.is_verified === true ||
+    storeProfile?.is_verified === true;
 
   const amountNum = parseFloat(withdrawAmount);
   const isInputValid = !isNaN(amountNum) && amountNum > 0;
@@ -94,7 +112,6 @@ export function Transfers() {
     }
   };
 
-  // Extract array using the correct DvaDetails type
   const virtualAccounts: DvaDetails[] =
     dvaData?.dvas || (dvaData?.dva ? [dvaData.dva] : []);
 
@@ -126,11 +143,28 @@ export function Transfers() {
               Make A Transfer To Your Dedicated Account
             </h3>
 
+            {/* FIX: Segmented UI logic for Loading -> Unverified -> Verified w/ DVA -> Verified w/ Error */}
             {dvaLoading ? (
               <div className="py-8 flex justify-center shrink-0">
                 <span className="material-symbols-outlined animate-spin text-primary">
                   progress_activity
                 </span>
+              </div>
+            ) : !isVerified ? (
+              <div className="py-6 flex flex-col items-center justify-center text-center space-y-3 border-t border-dashed border-stone-200 mt-2 shrink-0">
+                <span className="material-symbols-outlined text-[32px] text-stone-300">
+                  verified_user
+                </span>
+                <p className="text-xs text-stone-500 max-w-[200px]">
+                  Complete your KYC verification to unlock your dedicated
+                  virtual deposit accounts.
+                </p>
+                <button
+                  onClick={() => navigate("/settings")}
+                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  Verify Identity
+                </button>
               </div>
             ) : virtualAccounts.length > 0 ? (
               <div className="border-t border-dashed border-stone-200 pt-3.5 space-y-4 overflow-y-auto flex-1 pr-1 custom-scrollbar">
@@ -193,17 +227,21 @@ export function Transfers() {
             ) : (
               <div className="py-6 flex flex-col items-center justify-center text-center space-y-3 border-t border-dashed border-stone-200 mt-2 shrink-0">
                 <span className="material-symbols-outlined text-[32px] text-stone-300">
-                  verified_user
+                  account_balance_wallet
                 </span>
-                <p className="text-xs text-stone-500 max-w-[200px]">
-                  Complete your KYC verification to unlock your dedicated
-                  virtual deposit accounts.
+                <p className="text-xs text-stone-500 max-w-[220px]">
+                  {dvaError
+                    ? "We encountered an issue fetching your virtual accounts at this moment."
+                    : "Your dedicated virtual deposit account is currently being provisioned."}
                 </p>
                 <button
-                  onClick={() => navigate("/settings")}
-                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 mt-1"
                 >
-                  Verify Identity
+                  <span className="material-symbols-outlined text-[14px]">
+                    refresh
+                  </span>
+                  Refresh Status
                 </button>
               </div>
             )}

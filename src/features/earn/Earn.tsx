@@ -5,6 +5,7 @@ import {
   useEarnAssets,
   useExecuteInvestment,
 } from "../../services/earn.service";
+import { useProfile } from "../../services/settings.service"; // FIX: Added to fetch live profile data
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
 import type { EarnAsset } from "../../types/earn";
@@ -12,7 +13,8 @@ import { DashboardLayout } from "../../layouts/DashboardLayout";
 
 export function Earn() {
   const navigate = useNavigate();
-  const { data: assets, isLoading } = useEarnAssets();
+  const { data: assets, isLoading: isAssetsLoading } = useEarnAssets();
+  const { data: userProfile, isLoading: isProfileLoading } = useProfile(); // FIX: Fetching live status
   const executeInvestmentMutation = useExecuteInvestment();
   const { currency, exchangeRate } = useUIStore();
   const { user } = useAuthStore();
@@ -24,12 +26,24 @@ export function Earn() {
   const activeAsset: EarnAsset | undefined =
     assets?.find((a) => a.id === selectedAssetId) || assets?.[0];
 
-  const profile = user as unknown as Record<
+  // Map both the live backend profile and the fallback static store profile
+  const storeProfile = user as unknown as Record<
     string,
     string | boolean | undefined
   > | null;
+  const liveProfile = userProfile as unknown as Record<
+    string,
+    string | boolean | undefined
+  > | null;
+
+  // FIX: Checks the LIVE backend profile first to instantly unlock the UI
   const isVerified =
-    profile?.kyc_status === "verified" || profile?.is_verified === true;
+    liveProfile?.busha_status === "verified" ||
+    storeProfile?.busha_status === "verified" ||
+    liveProfile?.kyc_status === "verified" ||
+    storeProfile?.kyc_status === "verified" ||
+    liveProfile?.is_verified === true ||
+    storeProfile?.is_verified === true;
 
   const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
 
@@ -77,7 +91,7 @@ export function Earn() {
     }
   };
 
-  if (isLoading) {
+  if (isAssetsLoading || isProfileLoading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
@@ -215,7 +229,7 @@ export function Earn() {
                 </p>
               </div>
 
-              {/* FIX: Dynamic USD/NGN Price Toggle */}
+              {/* Dynamic USD/NGN Price Toggle */}
               <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Token Price ({currency})
@@ -228,7 +242,7 @@ export function Earn() {
                 </p>
               </div>
 
-              {/* FIX: Expanded to col-span-2 to keep the grid perfectly aligned after deleting the Volume card */}
+              {/* Expanded to col-span-2 to keep the grid perfectly aligned */}
               <div className="col-span-2 bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Protocol Fees

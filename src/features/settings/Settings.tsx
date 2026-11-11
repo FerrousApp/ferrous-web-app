@@ -249,7 +249,9 @@ export function Settings() {
     }
   };
 
-  const kycStatus = profile?.kyc_status || profile?.kycStatus;
+  // FIX: Properly checking busha_status as requested
+  const kycStatus =
+    profile?.busha_status || profile?.kyc_status || profile?.kycStatus;
   const kycRejectionReason =
     profile?.busha_rejection_reason ||
     profile?.kyc_rejection_reason ||
@@ -316,7 +318,7 @@ export function Settings() {
                 </span>
               </div>
               <span className="text-xs font-bold text-stone-500 xl:text-right mt-1 xl:mt-0">
-                10,000 USD
+                {kycStatus === "verified" ? "10,000 USD" : "0 USD"}
               </span>
             </div>
 
@@ -366,464 +368,498 @@ export function Settings() {
                 </div>
               )}
 
-              <div className="bg-white/80 backdrop-blur-sm border border-black/5 rounded-3xl p-4 flex items-center justify-between shadow-sm">
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-2">
-                    {[1, 2, 3].map((step) => (
-                      <div key={step} className="flex items-center gap-2">
-                        <div
-                          className={`w-10 h-10 rounded-xl font-bold text-sm flex items-center justify-center transition-all ${
-                            kycStep === step
-                              ? "border-2 border-primary bg-amber-50 text-primary shadow-sm"
-                              : kycStep > step
-                                ? "bg-emerald-600 text-white shadow-sm"
-                                : "border border-stone-200 bg-stone-50 text-stone-400"
-                          }`}
-                        >
-                          {kycStep > step ? "✓" : step}
-                        </div>
-                        {step !== 3 && (
-                          <div className="w-4 h-0.5 bg-stone-200"></div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">
-                      Step {kycStep} of 3
+              {/* FIX: Render Success State if Verified */}
+              {kycStatus === "verified" || kycStatus === "approved" ? (
+                <div className="bg-surface-container-lowest backdrop-blur-md border border-emerald-500/30 rounded-3xl p-8 lg:p-12 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+                  <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 border-4 border-emerald-50 flex items-center justify-center shadow-sm">
+                    <span className="material-symbols-outlined text-[40px]">
+                      verified_user
                     </span>
-                    <p className="text-xs font-semibold text-primary">
-                      {kycStep === 1
-                        ? "Personal Details"
-                        : kycStep === 2
-                          ? "Identity Document"
-                          : "Confirmation"}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-stone-900 tracking-tight">
+                      Identity Verified
+                    </h3>
+                    <p className="text-sm text-stone-500 mt-2 max-w-md mx-auto leading-relaxed">
+                      Your account has been successfully verified. You now have
+                      full access to Ferrous DeFi yields and expanded
+                      transaction limits.
                     </p>
                   </div>
                 </div>
-              </div>
-
-              <div className="bg-surface-container-lowest backdrop-blur-md border border-stone-300/60 rounded-3xl p-6 lg:p-7 shadow-sm space-y-5">
-                {kycStep === 1 && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          First Name
-                        </label>
-                        <input
-                          type="text"
-                          value={kycForm.first_name}
-                          onChange={(e) =>
-                            setKycForm({
-                              ...kycForm,
-                              first_name: e.target.value,
-                            })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder={fallbackFirstName}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          Last Name
-                        </label>
-                        <input
-                          type="text"
-                          value={kycForm.last_name}
-                          onChange={(e) =>
-                            setKycForm({
-                              ...kycForm,
-                              last_name: e.target.value,
-                            })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder={fallbackLastName}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="relative">
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          Occupation
-                        </label>
-                        <input
-                          type="text"
-                          value={kycForm.occupation}
-                          onFocus={() => setShowOccDropdown(true)}
-                          onBlur={() =>
-                            setTimeout(() => setShowOccDropdown(false), 200)
-                          }
-                          onChange={(e) =>
-                            setKycForm({
-                              ...kycForm,
-                              occupation: e.target.value,
-                            })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="Select or enter occupation"
-                        />
-
-                        {showOccDropdown && (
-                          <div className="absolute z-50 w-full mt-2 bg-white border border-stone-200 rounded-2xl shadow-xl max-h-52 overflow-y-auto py-2">
-                            {filteredOccupations.length > 0 ? (
-                              filteredOccupations.map((occ) => (
-                                <div
-                                  key={occ}
-                                  onClick={() => {
-                                    setKycForm({ ...kycForm, occupation: occ });
-                                    setShowOccDropdown(false);
-                                  }}
-                                  className="px-4 py-2.5 text-sm font-bold text-stone-700 hover:bg-stone-100 hover:text-primary cursor-pointer transition-colors"
-                                >
-                                  {occ}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="px-4 py-3 text-xs font-bold text-stone-500">
-                                Use "{kycForm.occupation}"
-                              </div>
+              ) : (
+                <>
+                  <div className="bg-white/80 backdrop-blur-sm border border-black/5 rounded-3xl p-4 flex items-center justify-between shadow-sm">
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2">
+                        {[1, 2, 3].map((step) => (
+                          <div key={step} className="flex items-center gap-2">
+                            <div
+                              className={`w-10 h-10 rounded-xl font-bold text-sm flex items-center justify-center transition-all ${
+                                kycStep === step
+                                  ? "border-2 border-primary bg-amber-50 text-primary shadow-sm"
+                                  : kycStep > step
+                                    ? "bg-emerald-600 text-white shadow-sm"
+                                    : "border border-stone-200 bg-stone-50 text-stone-400"
+                              }`}
+                            >
+                              {kycStep > step ? "✓" : step}
+                            </div>
+                            {step !== 3 && (
+                              <div className="w-4 h-0.5 bg-stone-200"></div>
                             )}
                           </div>
-                        )}
+                        ))}
                       </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          BVN (11 Digits)
-                        </label>
-                        <input
-                          type="text"
-                          value={kycForm.bvn}
-                          maxLength={11}
-                          onChange={(e) =>
-                            setKycForm({
-                              ...kycForm,
-                              bvn: e.target.value.replace(/\D/g, ""),
-                            })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="12345678901"
-                        />
+                      <div className="text-right">
+                        <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">
+                          Step {kycStep} of 3
+                        </span>
+                        <p className="text-xs font-semibold text-primary">
+                          {kycStep === 1
+                            ? "Personal Details"
+                            : kycStep === 2
+                              ? "Identity Document"
+                              : "Confirmation"}
+                        </p>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          Date of Birth
-                        </label>
-                        <input
-                          type="date"
-                          value={kycForm.birth_date}
-                          onChange={(e) =>
-                            setKycForm({
-                              ...kycForm,
-                              birth_date: e.target.value,
-                            })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                          Phone
-                        </label>
-                        <input
-                          type="text"
-                          value={kycForm.phone}
-                          onChange={(e) =>
-                            setKycForm({ ...kycForm, phone: e.target.value })
-                          }
-                          className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                          placeholder="+234..."
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-stone-200/60 mt-4">
-                      <h4 className="text-[11px] font-bold text-stone-500 uppercase mb-3">
-                        Residential Address
-                      </h4>
+                  <div className="bg-surface-container-lowest backdrop-blur-md border border-stone-300/60 rounded-3xl p-6 lg:p-7 shadow-sm space-y-5">
+                    {kycStep === 1 && (
                       <div className="space-y-4">
-                        <div>
-                          <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                            Street Address
-                          </label>
-                          <input
-                            type="text"
-                            value={kycForm.address.address_line_1}
-                            onChange={(e) =>
-                              setKycForm({
-                                ...kycForm,
-                                address: {
-                                  ...kycForm.address,
-                                  address_line_1: e.target.value,
-                                },
-                              })
-                            }
-                            className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                            placeholder="123 Example Street"
-                          />
-                        </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                              City
+                              First Name
                             </label>
                             <input
                               type="text"
-                              value={kycForm.address.city}
+                              value={kycForm.first_name}
                               onChange={(e) =>
                                 setKycForm({
                                   ...kycForm,
-                                  address: {
-                                    ...kycForm.address,
-                                    city: e.target.value,
-                                  },
+                                  first_name: e.target.value,
                                 })
                               }
                               className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                              placeholder="Lagos"
+                              placeholder={fallbackFirstName}
                             />
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                              State
+                              Last Name
                             </label>
                             <input
                               type="text"
-                              value={kycForm.address.state}
+                              value={kycForm.last_name}
                               onChange={(e) =>
                                 setKycForm({
                                   ...kycForm,
-                                  address: {
-                                    ...kycForm.address,
-                                    state: e.target.value,
-                                  },
+                                  last_name: e.target.value,
                                 })
                               }
                               className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                              placeholder="Lagos"
+                              placeholder={fallbackLastName}
                             />
                           </div>
                         </div>
-                      </div>
-                    </div>
 
-                    <button
-                      onClick={handleKycNext}
-                      disabled={!isStep1Valid}
-                      className="w-full py-3 mt-4 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition transform active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Next Step
-                    </button>
-                  </div>
-                )}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="relative">
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              Occupation
+                            </label>
+                            <input
+                              type="text"
+                              value={kycForm.occupation}
+                              onFocus={() => setShowOccDropdown(true)}
+                              onBlur={() =>
+                                setTimeout(() => setShowOccDropdown(false), 200)
+                              }
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  occupation: e.target.value,
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                              placeholder="Select or enter occupation"
+                            />
 
-                {kycStep === 2 && (
-                  <div className="space-y-4">
-                    <div className="pb-3 border-b border-stone-300/70">
-                      <h3 className="text-base font-extrabold text-stone-900">
-                        Identity Verification
-                      </h3>
-                      <p className="text-xs text-stone-500 mt-1">
-                        Provide your NIN and upload a clear selfie photo for
-                        biometric matching. No document uploads required.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                        NIN Number
-                      </label>
-                      {/* FIX: TS Error resolved by Type Guarding before extracting .number */}
-                      <input
-                        type="text"
-                        maxLength={11}
-                        value={
-                          kycForm.identifying_information[0].type ===
-                          "national-id"
-                            ? kycForm.identifying_information[0].number
-                            : ""
-                        }
-                        onChange={(e) => {
-                          const newInfo = [...kycForm.identifying_information];
-                          const firstItem = newInfo[0];
+                            {showOccDropdown && (
+                              <div className="absolute z-50 w-full mt-2 bg-white border border-stone-200 rounded-2xl shadow-xl max-h-52 overflow-y-auto py-2">
+                                {filteredOccupations.length > 0 ? (
+                                  filteredOccupations.map((occ) => (
+                                    <div
+                                      key={occ}
+                                      onClick={() => {
+                                        setKycForm({
+                                          ...kycForm,
+                                          occupation: occ,
+                                        });
+                                        setShowOccDropdown(false);
+                                      }}
+                                      className="px-4 py-2.5 text-sm font-bold text-stone-700 hover:bg-stone-100 hover:text-primary cursor-pointer transition-colors"
+                                    >
+                                      {occ}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="px-4 py-3 text-xs font-bold text-stone-500">
+                                    Use "{kycForm.occupation}"
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
 
-                          // FIX: TS Error resolved by Type Guarding before assigning .number
-                          if (firstItem.type === "national-id") {
-                            firstItem.number = e.target.value.replace(
-                              /\D/g,
-                              "",
-                            );
-                          }
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              BVN (11 Digits)
+                            </label>
+                            <input
+                              type="text"
+                              value={kycForm.bvn}
+                              maxLength={11}
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  bvn: e.target.value.replace(/\D/g, ""),
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                              placeholder="12345678901"
+                            />
+                          </div>
+                        </div>
 
-                          setKycForm({
-                            ...kycForm,
-                            identifying_information: newInfo,
-                          });
-                        }}
-                        className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-primary outline-none"
-                        placeholder="12345678901"
-                      />
-                    </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              Date of Birth
+                            </label>
+                            <input
+                              type="date"
+                              value={kycForm.birth_date}
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  birth_date: e.target.value,
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                              Phone
+                            </label>
+                            <input
+                              type="text"
+                              value={kycForm.phone}
+                              onChange={(e) =>
+                                setKycForm({
+                                  ...kycForm,
+                                  phone: e.target.value,
+                                })
+                              }
+                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                              placeholder="+234..."
+                            />
+                          </div>
+                        </div>
 
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      className="hidden"
-                      accept="image/png, image/jpeg, image/webp"
-                      onChange={async (e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setIsCompressing(true);
-                          try {
-                            const file = e.target.files[0];
-                            const compressedFile = await imageCompression(
-                              file,
-                              {
-                                maxSizeMB: 2.8,
-                                maxWidthOrHeight: 1920,
-                                useWebWorker: true,
-                              },
-                            );
-                            setSelfieFile(compressedFile);
-                          } catch (error) {
-                            console.error("Image compression failed", error);
-                            setSelfieFile(e.target.files[0]);
-                          } finally {
-                            setIsCompressing(false);
-                          }
-                        }
-                      }}
-                    />
+                        <div className="pt-4 border-t border-stone-200/60 mt-4">
+                          <h4 className="text-[11px] font-bold text-stone-500 uppercase mb-3">
+                            Residential Address
+                          </h4>
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                                Street Address
+                              </label>
+                              <input
+                                type="text"
+                                value={kycForm.address.address_line_1}
+                                onChange={(e) =>
+                                  setKycForm({
+                                    ...kycForm,
+                                    address: {
+                                      ...kycForm.address,
+                                      address_line_1: e.target.value,
+                                    },
+                                  })
+                                }
+                                className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                                placeholder="123 Example Street"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                                  City
+                                </label>
+                                <input
+                                  type="text"
+                                  value={kycForm.address.city}
+                                  onChange={(e) =>
+                                    setKycForm({
+                                      ...kycForm,
+                                      address: {
+                                        ...kycForm.address,
+                                        city: e.target.value,
+                                      },
+                                    })
+                                  }
+                                  className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                                  placeholder="Lagos"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                                  State
+                                </label>
+                                <input
+                                  type="text"
+                                  value={kycForm.address.state}
+                                  onChange={(e) =>
+                                    setKycForm({
+                                      ...kycForm,
+                                      address: {
+                                        ...kycForm.address,
+                                        state: e.target.value,
+                                      },
+                                    })
+                                  }
+                                  className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                                  placeholder="Lagos"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
 
-                    <div
-                      onClick={() =>
-                        !isCompressing && fileInputRef.current?.click()
-                      }
-                      className={`p-6 rounded-2xl border-2 border-dashed ${isCompressing ? "border-primary/50 bg-primary/5" : "border-stone-300/80 bg-stone-50/60 hover:bg-stone-100"} text-center space-y-2 cursor-pointer transition-colors`}
-                    >
-                      {isCompressing ? (
-                        <span className="material-symbols-outlined text-[32px] text-primary animate-spin">
-                          progress_activity
-                        </span>
-                      ) : (
-                        <span className="material-symbols-outlined text-[32px] text-stone-400">
-                          add_a_photo
-                        </span>
-                      )}
-                      <div className="text-xs font-bold text-stone-800">
-                        {isCompressing
-                          ? "Compressing Image..."
-                          : selfieFile
-                            ? selfieFile.name
-                            : "Click to Upload Selfie Photo"}
-                      </div>
-                      <p className="text-[11px] text-stone-500">
-                        Will be automatically compressed under 3MB
-                      </p>
-                    </div>
-
-                    <div className="flex gap-3 pt-4">
-                      <button
-                        onClick={() => setKycStep(1)}
-                        className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer"
-                      >
-                        Back
-                      </button>
-                      <button
-                        onClick={handleKycNext}
-                        // FIX: Type Guarding .number for strict length validation
-                        disabled={
-                          !selfieFile ||
-                          isCompressing ||
-                          (kycForm.identifying_information[0].type ===
-                            "national-id" &&
-                            kycForm.identifying_information[0].number.length !==
-                              11)
-                        }
-                        className="flex-1 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        Next Step
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {kycStep === 3 && (
-                  <div className="space-y-4">
-                    <div className="p-4 rounded-2xl bg-amber-50/80 border border-primary/40 text-center space-y-2">
-                      <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 flex items-center justify-center mx-auto">
-                        <span className="material-symbols-outlined">
-                          check_circle
-                        </span>
-                      </div>
-                      <h4 className="text-base font-extrabold text-stone-900">
-                        Ready to Submit Verification
-                      </h4>
-                      <p className="text-xs text-stone-600">
-                        All details have been compiled and encrypted for review
-                        by Ferrous Compliance.
-                      </p>
-                    </div>
-
-                    {kycError && (
-                      <div className="p-4 rounded-2xl bg-red-50 text-red-700 text-xs border border-red-200 mt-2 text-center font-semibold">
-                        {kycError}
+                        <button
+                          onClick={handleKycNext}
+                          disabled={!isStep1Valid}
+                          className="w-full py-3 mt-4 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition transform active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          Next Step
+                        </button>
                       </div>
                     )}
 
-                    <div className="pt-2 flex items-start gap-3">
-                      <input
-                        checked={termsAgreed}
-                        onChange={(e) => setTermsAgreed(e.target.checked)}
-                        className="mt-1 w-4 h-4 text-primary rounded border-stone-400 focus:ring-primary cursor-pointer"
-                        type="checkbox"
-                      />
-                      <label
-                        className="text-xs text-stone-600 leading-relaxed cursor-pointer"
-                        onClick={() => setTermsAgreed(!termsAgreed)}
-                      >
-                        By continuing you agree to have read and understood the{" "}
-                        <span className="font-bold text-stone-900 hover:underline">
-                          Terms and Conditions
-                        </span>{" "}
-                        of usage of this app and all it's features.
-                      </label>
-                    </div>
+                    {kycStep === 2 && (
+                      <div className="space-y-4">
+                        <div className="pb-3 border-b border-stone-300/70">
+                          <h3 className="text-base font-extrabold text-stone-900">
+                            Identity Verification
+                          </h3>
+                          <p className="text-xs text-stone-500 mt-1">
+                            Provide your NIN and upload a clear selfie photo for
+                            biometric matching. No document uploads required.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                            NIN Number
+                          </label>
+                          <input
+                            type="text"
+                            maxLength={11}
+                            value={
+                              kycForm.identifying_information[0].type ===
+                              "national-id"
+                                ? kycForm.identifying_information[0].number
+                                : ""
+                            }
+                            onChange={(e) => {
+                              const newInfo = [
+                                ...kycForm.identifying_information,
+                              ];
+                              const firstItem = newInfo[0];
 
-                    <div className="flex gap-3 pt-4">
-                      <button
-                        onClick={() => setKycStep(2)}
-                        disabled={submitKycMutation.isPending}
-                        className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Back
-                      </button>
+                              if (firstItem.type === "national-id") {
+                                firstItem.number = e.target.value.replace(
+                                  /\D/g,
+                                  "",
+                                );
+                              }
 
-                      <button
-                        onClick={handleKycSubmit}
-                        disabled={!termsAgreed || submitKycMutation.isPending}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        {submitKycMutation.isPending ? (
-                          <>
-                            <span className="material-symbols-outlined animate-spin text-[18px]">
+                              setKycForm({
+                                ...kycForm,
+                                identifying_information: newInfo,
+                              });
+                            }}
+                            className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-primary outline-none"
+                            placeholder="12345678901"
+                          />
+                        </div>
+
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          className="hidden"
+                          accept="image/png, image/jpeg, image/webp"
+                          onChange={async (e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              setIsCompressing(true);
+                              try {
+                                const file = e.target.files[0];
+                                const compressedFile = await imageCompression(
+                                  file,
+                                  {
+                                    maxSizeMB: 2.8,
+                                    maxWidthOrHeight: 1920,
+                                    useWebWorker: true,
+                                  },
+                                );
+                                setSelfieFile(compressedFile);
+                              } catch (error) {
+                                console.error(
+                                  "Image compression failed",
+                                  error,
+                                );
+                                setSelfieFile(e.target.files[0]);
+                              } finally {
+                                setIsCompressing(false);
+                              }
+                            }
+                          }}
+                        />
+
+                        <div
+                          onClick={() =>
+                            !isCompressing && fileInputRef.current?.click()
+                          }
+                          className={`p-6 rounded-2xl border-2 border-dashed ${isCompressing ? "border-primary/50 bg-primary/5" : "border-stone-300/80 bg-stone-50/60 hover:bg-stone-100"} text-center space-y-2 cursor-pointer transition-colors`}
+                        >
+                          {isCompressing ? (
+                            <span className="material-symbols-outlined text-[32px] text-primary animate-spin">
                               progress_activity
                             </span>
-                            Submitting...
-                          </>
-                        ) : submitKycMutation.isSuccess ? (
-                          "KYC Submitted Successfully ✓"
-                        ) : (
-                          "Submit KYC"
+                          ) : (
+                            <span className="material-symbols-outlined text-[32px] text-stone-400">
+                              add_a_photo
+                            </span>
+                          )}
+                          <div className="text-xs font-bold text-stone-800">
+                            {isCompressing
+                              ? "Compressing Image..."
+                              : selfieFile
+                                ? selfieFile.name
+                                : "Click to Upload Selfie Photo"}
+                          </div>
+                          <p className="text-[11px] text-stone-500">
+                            Will be automatically compressed under 3MB
+                          </p>
+                        </div>
+
+                        <div className="flex gap-3 pt-4">
+                          <button
+                            onClick={() => setKycStep(1)}
+                            className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer"
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={handleKycNext}
+                            disabled={
+                              !selfieFile ||
+                              isCompressing ||
+                              (kycForm.identifying_information[0].type ===
+                                "national-id" &&
+                                kycForm.identifying_information[0].number
+                                  .length !== 11)
+                            }
+                            className="flex-1 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            Next Step
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {kycStep === 3 && (
+                      <div className="space-y-4">
+                        <div className="p-4 rounded-2xl bg-amber-50/80 border border-primary/40 text-center space-y-2">
+                          <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 flex items-center justify-center mx-auto">
+                            <span className="material-symbols-outlined">
+                              check_circle
+                            </span>
+                          </div>
+                          <h4 className="text-base font-extrabold text-stone-900">
+                            Ready to Submit Verification
+                          </h4>
+                          <p className="text-xs text-stone-600">
+                            All details have been compiled and encrypted for
+                            review by Ferrous Compliance.
+                          </p>
+                        </div>
+
+                        {kycError && (
+                          <div className="p-4 rounded-2xl bg-red-50 text-red-700 text-xs border border-red-200 mt-2 text-center font-semibold">
+                            {kycError}
+                          </div>
                         )}
-                      </button>
-                    </div>
+
+                        <div className="pt-2 flex items-start gap-3">
+                          <input
+                            checked={termsAgreed}
+                            onChange={(e) => setTermsAgreed(e.target.checked)}
+                            className="mt-1 w-4 h-4 text-primary rounded border-stone-400 focus:ring-primary cursor-pointer"
+                            type="checkbox"
+                          />
+                          <label
+                            className="text-xs text-stone-600 leading-relaxed cursor-pointer"
+                            onClick={() => setTermsAgreed(!termsAgreed)}
+                          >
+                            By continuing you agree to have read and understood
+                            the{" "}
+                            <span className="font-bold text-stone-900 hover:underline">
+                              Terms and Conditions
+                            </span>{" "}
+                            of usage of this app and all it's features.
+                          </label>
+                        </div>
+
+                        <div className="flex gap-3 pt-4">
+                          <button
+                            onClick={() => setKycStep(2)}
+                            disabled={submitKycMutation.isPending}
+                            className="px-5 py-3 bg-stone-200 text-stone-700 font-bold text-sm rounded-2xl shadow-sm hover:bg-stone-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Back
+                          </button>
+
+                          <button
+                            onClick={handleKycSubmit}
+                            disabled={
+                              !termsAgreed || submitKycMutation.isPending
+                            }
+                            className="flex-1 flex items-center justify-center gap-2 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-bold text-sm rounded-2xl shadow-sm transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            {submitKycMutation.isPending ? (
+                              <>
+                                <span className="material-symbols-outlined animate-spin text-[18px]">
+                                  progress_activity
+                                </span>
+                                Submitting...
+                              </>
+                            ) : submitKycMutation.isSuccess ? (
+                              "KYC Submitted Successfully ✓"
+                            ) : (
+                              "Submit KYC"
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </div>
           )}
 
