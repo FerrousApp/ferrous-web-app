@@ -122,18 +122,28 @@ export function Settings() {
     user?.lastName ||
     (authNameParts.length > 1 ? authNameParts.slice(1).join(" ") : "Ekemere");
 
+  // FIX: Safely parse ISO timestamps from backend for the date input
+  const extractDate = (val?: string) => (val ? val.split("T")[0] : "");
+
+  // FIX: Form now directly reads and defaults to verified backend fields
   const profileForm: UpdateProfilePayload = editedProfile || {
-    first_name: profile?.first_name || profile?.firstName || "",
-    last_name: profile?.last_name || profile?.lastName || "",
+    first_name: profile?.first_name || profile?.firstName || fallbackFirstName,
+    last_name: profile?.last_name || profile?.lastName || fallbackLastName,
     phone_number: profile?.phone_number || profile?.phoneNumber || "",
     country_of_origin:
       profile?.country_of_origin || profile?.countryOfOrigin || "",
-    date_of_birth: profile?.date_of_birth || profile?.dateOfBirth || "",
+    date_of_birth:
+      extractDate(profile?.date_of_birth) ||
+      extractDate(profile?.dateOfBirth) ||
+      "",
   };
 
   // KYC State Machine
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
   const [kycError, setKycError] = useState<string | null>(null);
+
+  // FIX: Initialize phone with default country code to prevent undefined local parsing
+  const [phoneCode, setPhoneCode] = useState("+234");
   const [kycForm, setKycForm] = useState<KycPayload>({
     type: "individual",
     email: user?.email || "",
@@ -141,7 +151,7 @@ export function Settings() {
     last_name: "",
     middle_name: "",
     birth_date: "",
-    phone: "",
+    phone: "+234",
     occupation: "",
     country_id: "NG",
     address: {
@@ -178,7 +188,7 @@ export function Settings() {
     kycForm.last_name.trim() &&
     kycForm.occupation.trim() &&
     kycForm.birth_date &&
-    kycForm.phone.trim() &&
+    kycForm.phone.trim().length > 7 && // Ensure phone is actually entered beyond the code
     kycForm.bvn.trim().length === 11 &&
     kycForm.address.address_line_1.trim() &&
     kycForm.address.city.trim() &&
@@ -249,7 +259,6 @@ export function Settings() {
     }
   };
 
-  // FIX: Properly checking busha_status as requested
   const kycStatus =
     profile?.busha_status || profile?.kyc_status || profile?.kycStatus;
   const kycRejectionReason =
@@ -368,7 +377,6 @@ export function Settings() {
                 </div>
               )}
 
-              {/* FIX: Render Success State if Verified */}
               {kycStatus === "verified" || kycStatus === "approved" ? (
                 <div className="bg-surface-container-lowest backdrop-blur-md border border-emerald-500/30 rounded-3xl p-8 lg:p-12 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
                   <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 border-4 border-emerald-50 flex items-center justify-center shadow-sm">
@@ -552,22 +560,61 @@ export function Settings() {
                               className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
                             />
                           </div>
+
+                          {/* FIX: Country Code composite Phone Input */}
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                              Phone
+                              Phone Number
                             </label>
-                            <input
-                              type="text"
-                              value={kycForm.phone}
-                              onChange={(e) =>
-                                setKycForm({
-                                  ...kycForm,
-                                  phone: e.target.value,
-                                })
-                              }
-                              className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                              placeholder="+234..."
-                            />
+                            <div className="flex items-center bg-stone-50 rounded-2xl border border-stone-200 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 overflow-hidden">
+                              <select
+                                value={phoneCode}
+                                onChange={(e) => {
+                                  const newCode = e.target.value;
+                                  setPhoneCode(newCode);
+
+                                  // Preserve the local part while switching country codes
+                                  const localPart = kycForm.phone.startsWith(
+                                    phoneCode,
+                                  )
+                                    ? kycForm.phone.slice(phoneCode.length)
+                                    : kycForm.phone.replace(/^\+\d+/, "");
+
+                                  setKycForm({
+                                    ...kycForm,
+                                    phone: `${newCode}${localPart}`,
+                                  });
+                                }}
+                                className="bg-stone-100 text-stone-600 font-bold text-xs p-3 outline-none border-r border-stone-200 cursor-pointer appearance-none"
+                              >
+                                <option value="+234">🇳🇬 +234</option>
+                                <option value="+1">🇺🇸 +1</option>
+                                <option value="+44">🇬🇧 +44</option>
+                                <option value="+233">🇬🇭 +233</option>
+                                <option value="+254">🇰🇪 +254</option>
+                                <option value="+27">🇿🇦 +27</option>
+                              </select>
+                              <input
+                                type="tel"
+                                value={
+                                  kycForm.phone.startsWith(phoneCode)
+                                    ? kycForm.phone.slice(phoneCode.length)
+                                    : ""
+                                }
+                                onChange={(e) => {
+                                  const cleanedLocal = e.target.value.replace(
+                                    /\D/g,
+                                    "",
+                                  );
+                                  setKycForm({
+                                    ...kycForm,
+                                    phone: `${phoneCode}${cleanedLocal}`,
+                                  });
+                                }}
+                                className="w-full text-sm font-extrabold text-stone-900 p-3 bg-transparent outline-none"
+                                placeholder="801 234 5678"
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -932,6 +979,7 @@ export function Settings() {
                           })
                         }
                         className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        placeholder="+234..."
                       />
                     </div>
                     <div>
