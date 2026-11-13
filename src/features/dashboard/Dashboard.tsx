@@ -28,7 +28,6 @@ const TX_STATUS_MAP: Record<
     bg: "bg-[#EBF9EB]",
   },
   completed: {
-    // FIX: Added mapping for bond liquidations
     icon: "check_circle",
     color: "text-[#1E7E34]",
     bg: "bg-[#EBF9EB]",
@@ -36,7 +35,6 @@ const TX_STATUS_MAP: Record<
   pending: { icon: "sync", color: "text-tertiary", bg: "bg-tertiary-fixed" },
   failed: { icon: "cancel", color: "text-error", bg: "bg-error-container" },
   reversed: {
-    // FIX: Added mapping for reversed fiat withdrawals
     icon: "undo",
     color: "text-error",
     bg: "bg-error-container",
@@ -68,14 +66,14 @@ export function Dashboard() {
     }
   }, [allAssets, setExchangeRate]);
 
-  // FIX: Properly extract the root NGN balance since it's correctly parsed as a number in the service now.
   const rawNgnBalance =
     (balances as Record<string, number> | undefined)?.NGN || 0;
 
+  // FIX: Make sure displayBalance actually computes the proper NGN/USD split
   const displayBalance =
     currency === "NGN"
       ? rawNgnBalance
-      : rawNgnBalance / (exchangeRate > 0 ? exchangeRate : 1600); // Used 1600 fallback
+      : rawNgnBalance / (exchangeRate > 0 ? exchangeRate : 1600);
 
   const activePortfolio =
     allAssets?.filter(

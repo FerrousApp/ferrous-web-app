@@ -79,7 +79,8 @@ const COMMON_OCCUPATIONS = [
 ];
 
 export function Settings() {
-  const { exchangeRate } = useUIStore();
+  // FIX: Destructure currency out of the UI store
+  const { exchangeRate, currency } = useUIStore();
   const { user } = useAuthStore();
   const location = useLocation();
 
@@ -207,7 +208,6 @@ export function Settings() {
         selfieImage: selfieFile,
       });
 
-      // FIX: Wipe inputs clean on successful response
       setKycForm({
         type: "individual",
         email: user?.email || "",
@@ -235,7 +235,6 @@ export function Settings() {
       setSelfieFile(null);
       setTermsAgreed(false);
       setPhoneCode("+234");
-      // Note: intentionally leaving kycStep at 3 so the button remains visible with the success message.
     } catch (error) {
       console.error("KYC Submission failed", error);
 
@@ -291,8 +290,20 @@ export function Settings() {
     profile?.kyc_rejection_reason ||
     "Your verification was unsuccessful. Please review your details and try again.";
 
-  // FIX: Lock Profile form fields if identity is already verified
   const isProfileLocked = kycStatus === "verified" || kycStatus === "approved";
+
+  // FIX: Dynamic Transaction Limit formatting based on selected currency
+  const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
+  const baseLimitUsd = 10000;
+
+  const displayLimit =
+    kycStatus === "verified"
+      ? currency === "NGN"
+        ? `₦${(baseLimitUsd * currentRate).toLocaleString()}`
+        : `$${baseLimitUsd.toLocaleString()}`
+      : currency === "NGN"
+        ? "₦0"
+        : "$0";
 
   return (
     <DashboardLayout>
@@ -355,7 +366,8 @@ export function Settings() {
                 </span>
               </div>
               <span className="text-xs font-bold text-stone-500 xl:text-right mt-1 xl:mt-0">
-                {kycStatus === "verified" ? "10,000 USD" : "0 USD"}
+                {/* FIX: Render dynamic limit here */}
+                {displayLimit}
               </span>
             </div>
 
@@ -369,7 +381,7 @@ export function Settings() {
                 </span>
               </div>
               <span className="text-xs font-bold text-stone-500 tracking-tight xl:text-right mt-1 xl:mt-0">
-                1USD - {exchangeRate.toLocaleString()}N
+                1 USD = ₦{exchangeRate.toLocaleString()}
               </span>
             </div>
           </div>

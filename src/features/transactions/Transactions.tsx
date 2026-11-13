@@ -1,17 +1,70 @@
 // src/features/transactions/Transactions.tsx
 import { useState } from "react";
 import { useTransactions } from "../../services/dashboard.service";
+import { useUIStore } from "../../store/uiStore";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
 import type { Transaction } from "../../types/dashboard";
 
+const STATUS_MAP: Record<
+  string,
+  { label: string; style: string; icon: string }
+> = {
+  success: {
+    label: "Settled",
+    style: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    icon: "check_circle",
+  },
+  completed: {
+    label: "Settled",
+    style: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    icon: "check_circle",
+  },
+  pending: {
+    label: "Processing",
+    style: "bg-amber-50 text-amber-700 border-amber-200",
+    icon: "sync",
+  },
+  failed: {
+    label: "Failed",
+    style: "bg-red-50 text-red-700 border-red-200",
+    icon: "cancel",
+  },
+  reversed: {
+    label: "Reversed",
+    style: "bg-red-50 text-red-700 border-red-200",
+    icon: "undo",
+  },
+};
+
+const TYPE_MAP: Record<string, string> = {
+  fiat_deposit: "Fiat Deposit",
+  fiat_withdrawal: "Fiat Withdrawal",
+  bond_investment: "Vault Investment",
+  bond_liquidation: "Vault Liquidation",
+};
+
 export function Transactions() {
-  const { data: txData, isLoading } = useTransactions(50, 0);
+  const { currency, exchangeRate } = useUIStore();
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
-  const formatMoney = (amount: number, currency: string) => {
+  const { data: txData, isLoading } = useTransactions(50, 0);
+
+  const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
+
+  // Filter Logic
+  const filteredTransactions = txData?.transactions?.filter((tx) => {
+    const statusMatch = statusFilter === "all" || tx.status === statusFilter;
+    const typeMatch = typeFilter === "all" || tx.type === typeFilter;
+    return statusMatch && typeMatch;
+  });
+
+  const formatMoney = (amount: number, currencyCode: string) => {
     return new Intl.NumberFormat("en-NG", {
       style: "currency",
-      currency: currency === "NGN" || currency === "USD" ? currency : "NGN",
+      currency:
+        currencyCode === "NGN" || currencyCode === "USD" ? currencyCode : "NGN",
       minimumFractionDigits: 2,
     }).format(amount || 0);
   };
@@ -22,16 +75,64 @@ export function Transactions() {
       case "completed":
         return "text-emerald-700 bg-emerald-50 border-emerald-200";
       case "failed":
+      case "reversed":
         return "text-red-700 bg-red-50 border-red-200";
       default:
         return "text-amber-700 bg-amber-50 border-amber-200";
     }
   };
 
+  // Helper function to extract just the string representation for the UI
+  const getPrimaryValue = (tx: Transaction) => {
+    const rawAmount = tx.amount || 0;
+    let displayAmount = rawAmount;
+    let displayCurrency = tx.currency || "NGN";
+
+    // Dynamic UI toggling for standard NGN/USD values
+    if (tx.currency === "NGN" && currency === "USD") {
+      displayAmount = rawAmount / currentRate;
+      displayCurrency = "USD";
+    } else if (tx.currency === "USD" && currency === "NGN") {
+      displayAmount = rawAmount * currentRate;
+      displayCurrency = "NGN";
+    }
+
+    if (tx.type === "fiat_deposit")
+      return `+${formatMoney(displayAmount, displayCurrency)}`;
+    if (tx.type === "fiat_withdrawal")
+      return `-${formatMoney(displayAmount, displayCurrency)}`;
+    if (tx.type === "bond_investment")
+      return `-${formatMoney(displayAmount, displayCurrency)}`;
+    if (tx.type === "bond_liquidation" && tx.currency !== "NGN")
+      return `-${rawAmount} Bond`;
+    if (tx.type === "bond_liquidation" && tx.currency === "NGN")
+      return `+${formatMoney(displayAmount, displayCurrency)}`;
+
+    return formatMoney(displayAmount, displayCurrency);
+  };
+
+  const getModalHeader = (tx: Transaction) => {
+    switch (tx.type) {
+      case "fiat_deposit":
+        return "Fiat Deposit";
+      case "fiat_withdrawal":
+        return "Fiat Withdrawal";
+      case "bond_investment": {
+        const meta = tx.metadata as { assetId?: string } | undefined;
+        return `Asset Purchase: ${meta?.assetId || "BOND"}`;
+      }
+      case "bond_liquidation": {
+        const meta = tx.metadata as { assetId?: string } | undefined;
+        return `Asset Liquidation: ${meta?.assetId || "BOND"}`;
+      }
+      default:
+        return "Transaction Details";
+    }
+  };
+
   const renderModalContent = (tx: Transaction) => {
     switch (tx.type) {
       case "fiat_deposit": {
-        // FIX: Cast metadata specifically for Fiat Deposits
         const meta = tx.metadata as { busha_fee?: string } | undefined;
         return (
           <div className="space-y-4 text-sm">
@@ -64,7 +165,6 @@ export function Transactions() {
       }
 
       case "fiat_withdrawal": {
-        // FIX: Cast metadata specifically for Fiat Withdrawals
         const meta = tx.metadata as
           | {
               bank_name?: string;
@@ -111,7 +211,6 @@ export function Transactions() {
       }
 
       case "bond_investment": {
-        // FIX: Cast metadata specifically for Bond Investments
         const meta = tx.metadata as
           | {
               purchased_bond_amount?: string;
@@ -211,7 +310,6 @@ export function Transactions() {
       }
 
       case "bond_liquidation": {
-        // FIX: Cast metadata specifically for Bond Liquidations
         const meta = tx.metadata as
           | {
               swap_tx_hash?: string;
@@ -220,7 +318,7 @@ export function Transactions() {
           | undefined;
         return (
           <div className="space-y-4 text-sm">
-            {tx.status === "success" && tx.currency === "NGN" && (
+            {tx.status === "completed" && tx.currency === "NGN" && (
               <div className="flex justify-between border-b border-stone-100 pb-3">
                 <span className="text-stone-500 font-medium">
                   Final NGN Payout
@@ -280,124 +378,161 @@ export function Transactions() {
     }
   };
 
-  const getModalHeader = (tx: Transaction) => {
-    switch (tx.type) {
-      case "fiat_deposit":
-        return "Fiat Deposit";
-      case "fiat_withdrawal":
-        return "Fiat Withdrawal";
-      case "bond_investment": {
-        const meta = tx.metadata as { assetId?: string } | undefined;
-        return `Asset Purchase: ${meta?.assetId || "BOND"}`;
-      }
-      case "bond_liquidation": {
-        const meta = tx.metadata as { assetId?: string } | undefined;
-        return `Asset Liquidation: ${meta?.assetId || "BOND"}`;
-      }
-      default:
-        return "Transaction Details";
-    }
-  };
-
-  const getPrimaryValue = (tx: Transaction) => {
-    if (tx.type === "fiat_deposit") return `+${formatMoney(tx.amount, "NGN")}`;
-    if (tx.type === "fiat_withdrawal")
-      return `-${formatMoney(tx.amount, "NGN")}`;
-    if (tx.type === "bond_investment")
-      return `-${formatMoney(tx.amount, "NGN")}`;
-    if (tx.type === "bond_liquidation" && tx.currency !== "NGN")
-      return `-${tx.amount} Bond`;
-    if (tx.type === "bond_liquidation" && tx.currency === "NGN")
-      return `+${formatMoney(tx.amount, "NGN")}`;
-    return formatMoney(tx.amount, tx.currency);
-  };
-
   return (
     <DashboardLayout>
-      <div className="w-full max-w-4xl mx-auto space-y-6 pt-4">
-        <div className="flex items-center justify-between">
+      <div className="max-w-5xl mx-auto w-full space-y-6">
+        {/* Header & Filters */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-stone-900 tracking-tight">
-              Transaction History
-            </h1>
-            <p className="text-sm text-stone-500 mt-1">
-              Review all your deposits, withdrawals, and protocol executions.
+            <h2 className="text-xl font-extrabold text-stone-900 tracking-tight">
+              Transaction Ledger
+            </h2>
+            <p className="text-xs text-stone-500 mt-1">
+              Review your atomic swaps, yields, and transfers.
             </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Status Filter Pills */}
+            <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 shadow-inner">
+              {["all", "success", "pending", "failed"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                    statusFilter === s
+                      ? "bg-white text-stone-900 shadow-sm"
+                      : "text-stone-500 hover:text-stone-700"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {/* Type Filter Select */}
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="bg-white border border-stone-200/80 text-stone-700 text-xs font-bold rounded-xl px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+            >
+              <option value="all">All Types</option>
+              <option value="fiat_deposit">Deposits</option>
+              <option value="fiat_withdrawal">Withdrawals</option>
+              <option value="bond_investment">Investments</option>
+              <option value="bond_liquidation">Liquidations</option>
+            </select>
           </div>
         </div>
 
-        {isLoading ? (
-          <div className="py-20 flex justify-center">
-            <span className="material-symbols-outlined animate-spin text-4xl text-primary">
-              progress_activity
-            </span>
-          </div>
-        ) : (
-          <div className="bg-surface-container-lowest rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
-            {txData?.transactions?.length ? (
-              <div className="divide-y divide-stone-100">
-                {txData.transactions.map((tx) => (
+        {/* Ledger List */}
+        <div className="bg-white rounded-3xl p-5 md:p-7 border border-stone-200/90 shadow-sm relative overflow-hidden min-h-[400px]">
+          {isLoading ? (
+            <div className="py-12 flex justify-center">
+              <span className="material-symbols-outlined animate-spin text-3xl text-primary">
+                progress_activity
+              </span>
+            </div>
+          ) : !filteredTransactions || filteredTransactions.length === 0 ? (
+            <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+              <div className="w-16 h-16 rounded-full bg-stone-50 flex items-center justify-center">
+                <span className="material-symbols-outlined text-3xl text-stone-300">
+                  receipt_long
+                </span>
+              </div>
+              <h3 className="text-sm font-extrabold text-stone-900">
+                No transactions found
+              </h3>
+              <p className="text-xs text-stone-500 max-w-[250px]">
+                Adjust your filters to see historical activity.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-stone-100">
+              {filteredTransactions.map((tx: Transaction) => {
+                const safeStatus = tx.status || "pending";
+                const safeType = tx.type || "unknown_transaction";
+
+                const statusInfo = STATUS_MAP[safeStatus] || STATUS_MAP.pending;
+                const txTypeLabel =
+                  TYPE_MAP[safeType] || safeType.replace("_", " ");
+                const isPositive = [
+                  "fiat_deposit",
+                  "bond_liquidation",
+                ].includes(safeType);
+
+                return (
                   <div
                     key={tx.id}
                     onClick={() => setSelectedTx(tx)}
-                    className="p-4 sm:p-5 flex items-center justify-between hover:bg-stone-50 transition-colors cursor-pointer group"
+                    className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-stone-50/50 transition-colors -mx-4 px-4 rounded-xl min-w-0 cursor-pointer group"
                   >
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center space-x-4 min-w-0">
                       <div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center border shrink-0 ${getStatusColor(tx.status)}`}
+                        className={`w-10 h-10 rounded-2xl flex items-center justify-center text-[18px] font-bold shadow-sm shrink-0 ${
+                          isPositive
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-stone-100 text-stone-700"
+                        }`}
                       >
-                        <span className="material-symbols-outlined text-[24px]">
-                          {tx.type.includes("deposit")
+                        <span className="material-symbols-outlined">
+                          {isPositive
                             ? "arrow_downward"
-                            : tx.type.includes("withdraw")
+                            : safeType.includes("withdraw")
                               ? "arrow_upward"
                               : "swap_horiz"}
                         </span>
                       </div>
-                      <div>
-                        <h3 className="font-bold text-stone-900 capitalize text-sm sm:text-base">
-                          {tx.type.replace("_", " ")}
-                        </h3>
-                        <p className="text-xs text-stone-500 font-medium mt-0.5">
-                          {new Date(tx.created_at).toLocaleDateString(
-                            undefined,
-                            { month: "short", day: "numeric", year: "numeric" },
-                          )}{" "}
-                          •{" "}
-                          {new Date(tx.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+
+                      <div className="min-w-0 pr-4">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-extrabold text-stone-900 capitalize truncate">
+                            {txTypeLabel}
+                          </p>
+                          <span
+                            className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md border shrink-0 ${statusInfo.style}`}
+                          >
+                            {statusInfo.label}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-500 font-medium mt-0.5 truncate">
+                          {tx.provider || "Ferrous"} •{" "}
+                          {tx.created_at
+                            ? new Date(tx.created_at).toLocaleString()
+                            : "Recent"}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right flex items-center gap-4">
-                      <div>
-                        <p
-                          className={`font-black text-sm sm:text-base tracking-tight ${tx.type.includes("deposit") ? "text-emerald-600" : "text-stone-900"}`}
-                        >
-                          {getPrimaryValue(tx)}
-                        </p>
-                        <span
-                          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded block w-fit ml-auto mt-1 ${getStatusColor(tx.status)}`}
-                        >
-                          {tx.status}
+
+                    <div className="sm:text-right flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end pl-14 sm:pl-0 shrink-0">
+                      <span
+                        className={`text-base font-black tracking-tight ${isPositive ? "text-emerald-600" : "text-stone-900"}`}
+                      >
+                        {getPrimaryValue(tx)}
+                      </span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-stone-400 font-mono truncate max-w-[120px]">
+                          ID: {tx.id ? tx.id.split("-")[0] : "..."}
+                        </span>
+                        <span className="material-symbols-outlined text-stone-300 group-hover:text-primary transition-colors hidden sm:block">
+                          chevron_right
                         </span>
                       </div>
-                      <span className="material-symbols-outlined text-stone-300 group-hover:text-primary transition-colors hidden sm:block">
-                        chevron_right
-                      </span>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="py-20 text-center text-stone-500">
-                No transactions found.
-              </div>
-            )}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+
+          {txData?.pagination?.has_more && (
+            <div className="pt-6 mt-2 border-t border-stone-100 flex justify-center">
+              <button className="px-5 py-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold transition-all active:scale-[0.98] cursor-pointer">
+                Load Older Transactions
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* --- TRANSACTION DETAILS MODAL --- */}
@@ -411,7 +546,8 @@ export function Transactions() {
                   className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 ${getStatusColor(selectedTx.status)}`}
                 >
                   <span className="material-symbols-outlined text-[20px]">
-                    {selectedTx.type.includes("deposit")
+                    {selectedTx.type.includes("deposit") ||
+                    selectedTx.type.includes("liquidation")
                       ? "arrow_downward"
                       : selectedTx.type.includes("withdraw")
                         ? "arrow_upward"
@@ -443,7 +579,7 @@ export function Transactions() {
                 Transaction Value
               </p>
               <h1
-                className={`text-3xl font-black tracking-tight ${selectedTx.type.includes("deposit") ? "text-emerald-600" : "text-stone-900"}`}
+                className={`text-3xl font-black tracking-tight ${selectedTx.type.includes("deposit") || selectedTx.type.includes("liquidation") ? "text-emerald-600" : "text-stone-900"}`}
               >
                 {getPrimaryValue(selectedTx)}
               </h1>
