@@ -3,26 +3,72 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
 import type { Asset, TransactionsResponse } from "../types/dashboard";
 
+// 1. Strictly-typed recursive extractor to pierce through all Axios AND backend wrappers
+const extractBalances = (payload: unknown): Record<string, string> | null => {
+  if (!payload || typeof payload !== "object") return null;
+
+  const record = payload as Record<string, unknown>;
+
+  // If we found the "balances" key, return it
+  if (
+    "balances" in record &&
+    record.balances &&
+    typeof record.balances === "object"
+  ) {
+    return record.balances as Record<string, string>;
+  }
+
+  // If there is a "data" wrapper, drill down one layer deeper
+  if ("data" in record && record.data) {
+    return extractBalances(record.data);
+  }
+
+  return null;
+};
+
+// 2. Recursive extractor for arrays
+const extractArray = <T>(payload: unknown): T[] | null => {
+  if (!payload || typeof payload !== "object") return null;
+
+  if (Array.isArray(payload)) return payload as T[];
+
+  const record = payload as Record<string, unknown>;
+  if ("data" in record && record.data) {
+    return extractArray<T>(record.data);
+  }
+
+  return null;
+};
+
+// 3. Recursive extractor for Transactions
+const extractTransactions = (payload: unknown): TransactionsResponse | null => {
+  if (!payload || typeof payload !== "object") return null;
+
+  const record = payload as Record<string, unknown>;
+
+  if ("transactions" in record && Array.isArray(record.transactions)) {
+    return record as unknown as TransactionsResponse;
+  }
+
+  if ("data" in record && record.data) {
+    return extractTransactions(record.data);
+  }
+
+  return null;
+};
+
 const dashboardApi = {
   getBalances: async (): Promise<Record<string, number>> => {
     const res = await apiClient.get<unknown, unknown>("/wallet/balances");
 
-    // Safely extract from Axios response without 'any'
-    const axiosRes = res as { data?: unknown };
-    const payload = axiosRes.data ? axiosRes.data : res;
-
-    const root = payload as {
-      data?: {
-        balances?: Record<string, string>;
-      };
-      balances?: Record<string, string>;
-    };
-
-    const rawBalances = root?.data?.balances || root?.balances || {};
+    // The recursive extractor guarantees we find the balances object whether the
+    // shape is res.balances, res.data.balances, or res.data.data.balances
+    const rawBalances = extractBalances(res) || {};
 
     const parsedBalances: Record<string, number> = {};
     for (const [key, value] of Object.entries(rawBalances)) {
-      parsedBalances[key] = parseFloat(value) || 0;
+      // Cast to string to satisfy TS, then parse to a float
+      parsedBalances[key] = parseFloat(String(value)) || 0;
     }
 
     return parsedBalances;
@@ -30,42 +76,12 @@ const dashboardApi = {
 
   getMarketAssets: async (): Promise<Asset[]> => {
     const res = await apiClient.get<unknown, unknown>("/market/assets");
-
-    const axiosRes = res as { data?: unknown };
-    const payload = axiosRes.data ? axiosRes.data : res;
-
-    const root = payload as { data?: Asset[] } | Asset[];
-
-    if (Array.isArray(root)) return root;
-    if (
-      root &&
-      typeof root === "object" &&
-      "data" in root &&
-      Array.isArray(root.data)
-    )
-      return root.data;
-
-    return [];
+    return extractArray<Asset>(res) || [];
   },
 
   getTrendingAssets: async (): Promise<Asset[]> => {
     const res = await apiClient.get<unknown, unknown>("/utility/trending");
-
-    const axiosRes = res as { data?: unknown };
-    const payload = axiosRes.data ? axiosRes.data : res;
-
-    const root = payload as { data?: Asset[] } | Asset[];
-
-    if (Array.isArray(root)) return root;
-    if (
-      root &&
-      typeof root === "object" &&
-      "data" in root &&
-      Array.isArray(root.data)
-    )
-      return root.data;
-
-    return [];
+    return extractArray<Asset>(res) || [];
   },
 
   getTransactions: async (
@@ -76,19 +92,10 @@ const dashboardApi = {
       `/transactions/?limit=${limit}&offset=${offset}`,
     );
 
-    const axiosRes = res as { data?: unknown };
-    const payload = axiosRes.data ? axiosRes.data : res;
+    const extractedData = extractTransactions(res);
 
-    // Cast through unknown to avoid structural overlap errors from the compiler
-    const root = payload as unknown as TransactionsResponse;
-
-    if (root?.transactions) {
-      return root;
-    }
-
-    const nestedRoot = payload as { data?: TransactionsResponse };
-    if (nestedRoot?.data?.transactions) {
-      return nestedRoot.data;
+    if (extractedData) {
+      return extractedData;
     }
 
     return {
