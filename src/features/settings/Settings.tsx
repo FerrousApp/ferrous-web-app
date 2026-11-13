@@ -122,10 +122,8 @@ export function Settings() {
     user?.lastName ||
     (authNameParts.length > 1 ? authNameParts.slice(1).join(" ") : "Ekemere");
 
-  // FIX: Safely parse ISO timestamps from backend for the date input
   const extractDate = (val?: string) => (val ? val.split("T")[0] : "");
 
-  // FIX: Form now directly reads and defaults to verified backend fields
   const profileForm: UpdateProfilePayload = editedProfile || {
     first_name: profile?.first_name || profile?.firstName || fallbackFirstName,
     last_name: profile?.last_name || profile?.lastName || fallbackLastName,
@@ -142,7 +140,6 @@ export function Settings() {
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
   const [kycError, setKycError] = useState<string | null>(null);
 
-  // FIX: Initialize phone with default country code to prevent undefined local parsing
   const [phoneCode, setPhoneCode] = useState("+234");
   const [kycForm, setKycForm] = useState<KycPayload>({
     type: "individual",
@@ -169,13 +166,11 @@ export function Settings() {
     has_accepted_terms: false,
   });
 
-  // Searchable Occupation Dropdown State
   const [showOccDropdown, setShowOccDropdown] = useState(false);
   const filteredOccupations = COMMON_OCCUPATIONS.filter((occ) =>
     occ.toLowerCase().includes(kycForm.occupation.toLowerCase()),
   );
 
-  // File Upload State
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [isCompressing, setIsCompressing] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
@@ -188,7 +183,7 @@ export function Settings() {
     kycForm.last_name.trim() &&
     kycForm.occupation.trim() &&
     kycForm.birth_date &&
-    kycForm.phone.trim().length > 7 && // Ensure phone is actually entered beyond the code
+    kycForm.phone.trim().length > 7 &&
     kycForm.bvn.trim().length === 11 &&
     kycForm.address.address_line_1.trim() &&
     kycForm.address.city.trim() &&
@@ -211,6 +206,36 @@ export function Settings() {
         },
         selfieImage: selfieFile,
       });
+
+      // FIX: Wipe inputs clean on successful response
+      setKycForm({
+        type: "individual",
+        email: user?.email || "",
+        first_name: "",
+        last_name: "",
+        middle_name: "",
+        birth_date: "",
+        phone: "+234",
+        occupation: "",
+        country_id: "NG",
+        address: {
+          address_line_1: "",
+          city: "",
+          state: "",
+          postal_code: "",
+          country_id: "NG",
+        },
+        bvn: "",
+        identifying_information: [
+          { type: "national-id", number: "", country: "NG" },
+          { type: "selfie", country: "NG" },
+        ],
+        has_accepted_terms: false,
+      });
+      setSelfieFile(null);
+      setTermsAgreed(false);
+      setPhoneCode("+234");
+      // Note: intentionally leaving kycStep at 3 so the button remains visible with the success message.
     } catch (error) {
       console.error("KYC Submission failed", error);
 
@@ -265,6 +290,9 @@ export function Settings() {
     profile?.busha_rejection_reason ||
     profile?.kyc_rejection_reason ||
     "Your verification was unsuccessful. Please review your details and try again.";
+
+  // FIX: Lock Profile form fields if identity is already verified
+  const isProfileLocked = kycStatus === "verified" || kycStatus === "approved";
 
   return (
     <DashboardLayout>
@@ -561,7 +589,6 @@ export function Settings() {
                             />
                           </div>
 
-                          {/* FIX: Country Code composite Phone Input */}
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                               Phone Number
@@ -573,7 +600,6 @@ export function Settings() {
                                   const newCode = e.target.value;
                                   setPhoneCode(newCode);
 
-                                  // Preserve the local part while switching country codes
                                   const localPart = kycForm.phone.startsWith(
                                     phoneCode,
                                   )
@@ -913,13 +939,25 @@ export function Settings() {
           {/* --- PROFILE TAB --- */}
           {activeTab === "profile" && (
             <div className="max-w-2xl bg-surface-container-lowest backdrop-blur-md border border-stone-300/60 rounded-3xl p-6 lg:p-7 shadow-sm space-y-6">
-              <div className="pb-3 border-b border-stone-300/70">
-                <h3 className="text-lg font-extrabold text-stone-900">
-                  Profile Settings
-                </h3>
-                <p className="text-xs text-stone-500 mt-1">
-                  Update your basic information.
-                </p>
+              <div className="pb-3 border-b border-stone-300/70 flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-extrabold text-stone-900">
+                    Profile Settings
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-1">
+                    {isProfileLocked
+                      ? "Your identity is verified. Basic information cannot be changed."
+                      : "Update your basic information."}
+                  </p>
+                </div>
+                {isProfileLocked && (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                    <span className="material-symbols-outlined text-[12px]">
+                      lock
+                    </span>
+                    Verified
+                  </span>
+                )}
               </div>
 
               {isProfileLoading ? (
@@ -938,13 +976,14 @@ export function Settings() {
                       <input
                         type="text"
                         value={profileForm.first_name}
+                        disabled={isProfileLocked}
                         onChange={(e) =>
                           setEditedProfile({
                             ...profileForm,
                             first_name: e.target.value,
                           })
                         }
-                        className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        className={`w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 ${isProfileLocked ? "bg-stone-100 cursor-not-allowed opacity-70" : "bg-stone-50"}`}
                       />
                     </div>
                     <div>
@@ -954,13 +993,14 @@ export function Settings() {
                       <input
                         type="text"
                         value={profileForm.last_name}
+                        disabled={isProfileLocked}
                         onChange={(e) =>
                           setEditedProfile({
                             ...profileForm,
                             last_name: e.target.value,
                           })
                         }
-                        className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        className={`w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 ${isProfileLocked ? "bg-stone-100 cursor-not-allowed opacity-70" : "bg-stone-50"}`}
                       />
                     </div>
                   </div>
@@ -972,14 +1012,14 @@ export function Settings() {
                       <input
                         type="text"
                         value={profileForm.phone_number}
+                        disabled={isProfileLocked}
                         onChange={(e) =>
                           setEditedProfile({
                             ...profileForm,
                             phone_number: e.target.value,
                           })
                         }
-                        className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                        placeholder="+234..."
+                        className={`w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 ${isProfileLocked ? "bg-stone-100 cursor-not-allowed opacity-70" : "bg-stone-50"}`}
                       />
                     </div>
                     <div>
@@ -989,13 +1029,14 @@ export function Settings() {
                       <input
                         type="text"
                         value={profileForm.country_of_origin}
+                        disabled={isProfileLocked}
                         onChange={(e) =>
                           setEditedProfile({
                             ...profileForm,
                             country_of_origin: e.target.value,
                           })
                         }
-                        className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        className={`w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 ${isProfileLocked ? "bg-stone-100 cursor-not-allowed opacity-70" : "bg-stone-50"}`}
                       />
                     </div>
                   </div>
@@ -1006,13 +1047,14 @@ export function Settings() {
                     <input
                       type="date"
                       value={profileForm.date_of_birth}
+                      disabled={isProfileLocked}
                       onChange={(e) =>
                         setEditedProfile({
                           ...profileForm,
                           date_of_birth: e.target.value,
                         })
                       }
-                      className="w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 bg-stone-50 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                      className={`w-full text-sm font-extrabold text-stone-900 p-3 rounded-2xl border border-stone-200 outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 ${isProfileLocked ? "bg-stone-100 cursor-not-allowed opacity-70" : "bg-stone-50"}`}
                     />
                   </div>
 
@@ -1024,17 +1066,19 @@ export function Settings() {
                     </p>
                   )}
 
-                  <div className="pt-2 border-t border-stone-100 flex justify-end">
-                    <button
-                      onClick={handleProfileUpdate}
-                      disabled={updateProfileMutation.isPending}
-                      className="px-6 py-3 bg-stone-900 hover:bg-stone-800 text-white font-bold text-sm rounded-2xl shadow-sm transition disabled:opacity-50 cursor-pointer"
-                    >
-                      {updateProfileMutation.isPending
-                        ? "Saving..."
-                        : "Save Profile Changes"}
-                    </button>
-                  </div>
+                  {!isProfileLocked && (
+                    <div className="pt-2 border-t border-stone-100 flex justify-end">
+                      <button
+                        onClick={handleProfileUpdate}
+                        disabled={updateProfileMutation.isPending}
+                        className="px-6 py-3 bg-stone-900 hover:bg-stone-800 text-white font-bold text-sm rounded-2xl shadow-sm transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {updateProfileMutation.isPending
+                          ? "Saving..."
+                          : "Save Profile Changes"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
