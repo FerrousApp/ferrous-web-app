@@ -27,8 +27,20 @@ const TX_STATUS_MAP: Record<
     color: "text-[#1E7E34]",
     bg: "bg-[#EBF9EB]",
   },
+  completed: {
+    // FIX: Added mapping for bond liquidations
+    icon: "check_circle",
+    color: "text-[#1E7E34]",
+    bg: "bg-[#EBF9EB]",
+  },
   pending: { icon: "sync", color: "text-tertiary", bg: "bg-tertiary-fixed" },
   failed: { icon: "cancel", color: "text-error", bg: "bg-error-container" },
+  reversed: {
+    // FIX: Added mapping for reversed fiat withdrawals
+    icon: "undo",
+    color: "text-error",
+    bg: "bg-error-container",
+  },
 };
 
 const TRENDING_GRADIENTS = [
@@ -56,17 +68,17 @@ export function Dashboard() {
     }
   }, [allAssets, setExchangeRate]);
 
-  // FIX: Removed parseFloat as balance is now strictly a number coming from the service
-  const rawNgnBalance = balances?.NGN || 0;
+  // FIX: Properly extract the root NGN balance since it's correctly parsed as a number in the service now.
+  const rawNgnBalance =
+    (balances as Record<string, number> | undefined)?.NGN || 0;
 
   const displayBalance =
     currency === "NGN"
       ? rawNgnBalance
-      : rawNgnBalance / (exchangeRate > 0 ? exchangeRate : 1457);
+      : rawNgnBalance / (exchangeRate > 0 ? exchangeRate : 1600); // Used 1600 fallback
 
   const activePortfolio =
     allAssets?.filter(
-      // FIX: Removed parseFloat here as well
       (asset: Asset) => balances && (balances[asset.id] || 0) > 0,
     ) || [];
 
@@ -113,7 +125,6 @@ export function Dashboard() {
         {activePortfolio.length > 0 && (
           <div className="flex flex-col space-y-space-sm">
             {activePortfolio.map((asset: Asset) => {
-              // FIX: Removed parseFloat here as well
               const userAssetBalance = balances?.[asset.id] || 0;
               const yieldPercentage = asset.live_pricing
                 ? (asset.live_pricing.annualized_yield_bps / 100).toFixed(2)

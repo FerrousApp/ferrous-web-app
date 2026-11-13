@@ -23,7 +23,6 @@ export interface Asset {
   live_pricing: LivePricing | null;
 }
 
-// FIX: Added the optional metadata object so the UI can read bank_name and account_number for withdrawals
 export interface Transaction {
   id: string;
   reference: string;
@@ -36,7 +35,8 @@ export interface Transaction {
   provider: string;
   amount: number;
   currency: string;
-  status: "success" | "failed" | "pending";
+  // FIX: Added 'reversed' and 'completed' to the allowed status strings
+  status: "success" | "failed" | "pending" | "reversed" | "completed";
   created_at: string;
   granular_status?: string;
   metadata?: {
