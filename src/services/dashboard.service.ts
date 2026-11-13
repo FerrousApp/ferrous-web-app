@@ -4,19 +4,30 @@ import { apiClient } from "../lib/axios";
 import type { Asset, TransactionsResponse } from "../types/dashboard";
 
 const dashboardApi = {
-  getBalances: async (): Promise<Record<string, string>> => {
-    // Strongly type as unknown, then cast safely to Records
+  getBalances: async (): Promise<Record<string, number>> => {
+    // FIX: Changed string to number in the return type
     const res = await apiClient.get<unknown, unknown>("/wallet/balances");
     const root = res as Record<string, unknown>;
     const data1 = root?.data as Record<string, unknown> | undefined;
     const data2 = data1?.data as Record<string, unknown> | undefined;
 
-    // Check all possible depth levels
-    if (root?.balances) return root.balances as Record<string, string>;
-    if (data1?.balances) return data1.balances as Record<string, string>;
-    if (data2?.balances) return data2.balances as Record<string, string>;
+    let balances: Record<string, string> | undefined;
 
-    return {};
+    if (root?.balances) balances = root.balances as Record<string, string>;
+    else if (data1?.balances)
+      balances = data1.balances as Record<string, string>;
+    else if (data2?.balances)
+      balances = data2.balances as Record<string, string>;
+
+    if (!balances) return {};
+
+    // FIX: Backend specifically requested we parse these strings into numbers here
+    const parsedBalances: Record<string, number> = {};
+    for (const [key, value] of Object.entries(balances)) {
+      parsedBalances[key] = parseFloat(value) || 0;
+    }
+
+    return parsedBalances;
   },
 
   getMarketAssets: async (): Promise<Asset[]> => {
@@ -24,7 +35,6 @@ const dashboardApi = {
     const root = res as Record<string, unknown>;
     const data1 = root?.data as Record<string, unknown> | undefined;
 
-    // Array checks
     if (Array.isArray(res)) return res as Asset[];
     if (Array.isArray(root?.data)) return root.data as Asset[];
     if (Array.isArray(data1?.data)) return data1.data as Asset[];
@@ -68,7 +78,11 @@ const dashboardApi = {
 
 // React Query Hooks
 export const useWalletBalances = () =>
-  useQuery({ queryKey: ["balances"], queryFn: dashboardApi.getBalances });
+  useQuery({
+    queryKey: ["balances"],
+    queryFn: dashboardApi.getBalances,
+    refetchInterval: 10000,
+  }); // Optional: refresh balance regularly
 
 export const useMarketAssets = () =>
   useQuery({
@@ -86,4 +100,5 @@ export const useTransactions = (limit = 20, offset = 0) =>
   useQuery({
     queryKey: ["transactions", limit, offset],
     queryFn: () => dashboardApi.getTransactions(limit, offset),
+    refetchInterval: 5000, // FIX: Constantly poll transactions to catch the USDC_DELIVERED state
   });

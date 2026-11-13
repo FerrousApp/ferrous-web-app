@@ -23,6 +23,7 @@ export interface Asset {
   live_pricing: LivePricing | null;
 }
 
+// FIX: Added the optional metadata object so the UI can read bank_name and account_number for withdrawals
 export interface Transaction {
   id: string;
   reference: string;
@@ -38,6 +39,12 @@ export interface Transaction {
   status: "success" | "failed" | "pending";
   created_at: string;
   granular_status?: string;
+  metadata?: {
+    bank_name?: string;
+    account_number?: string;
+    busha_fee?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface Pagination {

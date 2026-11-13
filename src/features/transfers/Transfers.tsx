@@ -10,6 +10,7 @@ import {
   useTransactions,
 } from "../../services/dashboard.service";
 import { useProfile } from "../../services/settings.service";
+import { useExecuteSwap } from "../../services/earn.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
@@ -21,7 +22,6 @@ export function Transfers() {
   const { user } = useAuthStore();
 
   const { data: userProfile } = useProfile();
-  // FIX: Destructure isError to catch API failures separately
   const {
     data: dvaData,
     isLoading: dvaLoading,
@@ -31,12 +31,14 @@ export function Transfers() {
 
   const { data: txData } = useTransactions(10, 0);
   const withdrawalMutation = useWithdrawal();
+  const executeSwapMutation = useExecuteSwap();
 
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
   const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  const rawNgnBalance = parseFloat(balances?.NGN || "0");
+  // FIX: Removed "as any" and "parseFloat". Balances is safely typed as Record<string, number> now
+  const rawNgnBalance = balances?.NGN || 0;
   const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
   const displayBalance =
     currency === "NGN" ? rawNgnBalance : rawNgnBalance / currentRate;
@@ -45,22 +47,7 @@ export function Transfers() {
   const granularStatus = latestTx?.granular_status as
     | GranularStatus
     | undefined;
-
-  const step1Active = [
-    "PROCESSING_FIAT_RAMP",
-    "PENDING_ON_CHAIN",
-    "PROCESSING_ON_CHAIN_SWAP",
-    "success",
-  ].includes(granularStatus || "");
-  const step2Active = [
-    "PENDING_ON_CHAIN",
-    "PROCESSING_ON_CHAIN_SWAP",
-    "success",
-  ].includes(granularStatus || "");
-  const step3Active = ["PROCESSING_ON_CHAIN_SWAP", "success"].includes(
-    granularStatus || "",
-  );
-  const step4Active = granularStatus === "success";
+  const txType = latestTx?.type;
 
   const storeProfile = user as unknown as Record<
     string,
@@ -115,6 +102,219 @@ export function Transfers() {
   const virtualAccounts: DvaDetails[] =
     dvaData?.dvas || (dvaData?.dva ? [dvaData.dva] : []);
 
+  const renderPipelineSteps = () => {
+    if (!latestTx) {
+      return (
+        <div className="py-8 text-center text-stone-500 text-xs">
+          No active pipeline operations.
+        </div>
+      );
+    }
+
+    if (txType === "fiat_deposit") {
+      const isSettled =
+        granularStatus === "success" || latestTx.status === "success";
+      return (
+        <div className="space-y-2.5">
+          <div
+            className={`p-3.5 rounded-2xl border flex items-center justify-between ${isSettled ? "bg-stone-50 border-stone-200/80" : "bg-amber-50/40 border-amber-200/80"}`}
+          >
+            <div className="flex items-center space-x-3">
+              <span
+                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${isSettled ? "bg-stone-200 text-stone-700" : "bg-amber-400 text-stone-950 animate-pulse"}`}
+              >
+                1
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-stone-900">
+                  Bank Transfer Received
+                </h4>
+              </div>
+            </div>
+            {isSettled ? (
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                ✓ Settled
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                Processing
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (txType === "fiat_withdrawal") {
+      const isSettled =
+        granularStatus === "success" || latestTx.status === "success";
+      return (
+        <div className="space-y-2.5">
+          <div className="p-3.5 rounded-2xl border bg-stone-50 border-stone-200/80 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
+                1
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-stone-900">
+                  Withdrawal Initiated
+                </h4>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              ✓ Complete
+            </span>
+          </div>
+
+          <div
+            className={`p-3.5 rounded-2xl border flex items-center justify-between ${isSettled ? "bg-stone-50 border-stone-200/80" : "bg-amber-50/40 border-amber-200/80"}`}
+          >
+            <div className="flex items-center space-x-3">
+              <span
+                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${isSettled ? "bg-stone-200 text-stone-700" : "bg-amber-400 text-stone-950 animate-pulse"}`}
+              >
+                2
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-stone-900">
+                  Bank Payout
+                </h4>
+                {latestTx.metadata?.bank_name && (
+                  <span className="text-[10px] text-stone-500 font-medium block mt-0.5">
+                    {latestTx.metadata.bank_name} •{" "}
+                    {latestTx.metadata.account_number}
+                  </span>
+                )}
+              </div>
+            </div>
+            {isSettled ? (
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                ✓ Settled
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                Processing
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const step1Active = [
+      "USDC_DELIVERED",
+      "PENDING_ON_CHAIN",
+      "PROCESSING_ON_CHAIN_SWAP",
+      "success",
+    ].includes(granularStatus || "");
+    const step2Active = [
+      "PENDING_ON_CHAIN",
+      "PROCESSING_ON_CHAIN_SWAP",
+      "success",
+    ].includes(granularStatus || "");
+    const step3Active = ["PROCESSING_ON_CHAIN_SWAP", "success"].includes(
+      granularStatus || "",
+    );
+    const step4Active = granularStatus === "success";
+
+    const needsManualExecution = granularStatus === "USDC_DELIVERED";
+
+    return (
+      <div className="space-y-2.5">
+        <div
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step1Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+        >
+          <div className="flex items-center space-x-3">
+            <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
+              1
+            </span>
+            <div>
+              <h4 className="text-xs font-bold text-stone-900">Fiat Ramp</h4>
+            </div>
+          </div>
+          {step1Active && (
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              ✓ Settled
+            </span>
+          )}
+        </div>
+
+        <div
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step2Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+        >
+          <div className="flex items-center space-x-3">
+            <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
+              2
+            </span>
+            <div>
+              <h4 className="text-xs font-bold text-stone-900">
+                On-Chain Ledger
+              </h4>
+            </div>
+          </div>
+          {step2Active && (
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              ✓ Confirmed
+            </span>
+          )}
+        </div>
+
+        <div
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step3Active ? "bg-amber-50/40 border-amber-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+        >
+          <div className="flex items-center space-x-3">
+            <span
+              className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${step3Active && !step4Active ? "bg-amber-400 text-stone-950 animate-pulse" : "bg-stone-200 text-stone-700"}`}
+            >
+              3
+            </span>
+            <div>
+              <h4 className="text-xs font-bold text-stone-900">
+                Protocol Swap
+              </h4>
+            </div>
+          </div>
+          {step3Active && !step4Active && (
+            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+              Processing
+            </span>
+          )}
+          {step4Active && (
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              ✓ Swapped
+            </span>
+          )}
+        </div>
+
+        {needsManualExecution && (
+          <div className="pt-2">
+            <button
+              onClick={() => executeSwapMutation.mutate(latestTx.id)}
+              disabled={executeSwapMutation.isPending}
+              className="w-full py-3.5 bg-primary hover:bg-primary-container text-on-primary-container font-extrabold text-xs tracking-wide rounded-xl shadow-sm transition active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {executeSwapMutation.isPending ? (
+                <>
+                  <span className="material-symbols-outlined animate-spin text-[16px]">
+                    progress_activity
+                  </span>
+                  Executing Smart Contract...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-[16px]">
+                    fingerprint
+                  </span>
+                  Finalize Blockchain Execution
+                </>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -143,7 +343,6 @@ export function Transfers() {
               Make A Transfer To Your Dedicated Account
             </h3>
 
-            {/* FIX: Segmented UI logic for Loading -> Unverified -> Verified w/ DVA -> Verified w/ Error */}
             {dvaLoading ? (
               <div className="py-8 flex justify-center shrink-0">
                 <span className="material-symbols-outlined animate-spin text-primary">
@@ -273,7 +472,7 @@ export function Transfers() {
               </div>
               <p className="text-2xl font-extrabold tracking-tight text-white mb-4">
                 {currency === "NGN"
-                  ? `₦${displayBalance.toLocaleString()}`
+                  ? `₦${displayBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                   : `$${displayBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </p>
             </div>
@@ -304,7 +503,10 @@ export function Transfers() {
                   I would like to withdraw
                 </p>
                 <span className="text-[10px] text-amber-600 font-semibold">
-                  Available: ₦{rawNgnBalance.toLocaleString()}
+                  Available: ₦
+                  {rawNgnBalance.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                  })}
                 </span>
               </div>
               <div className="flex items-center bg-stone-50 rounded-2xl border border-stone-200 px-3.5 py-2.5 focus-within:border-primary">
@@ -370,9 +572,11 @@ export function Transfers() {
               <h2 className="text-base font-extrabold text-stone-900 tracking-tight">
                 Processing Pipeline
               </h2>
-              <p className="text-xs text-stone-500">Atomic swap & execution</p>
+              <p className="text-xs text-stone-500">
+                Activity status & execution
+              </p>
             </div>
-            {step4Active && (
+            {granularStatus === "success" && (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-extrabold bg-primary text-on-primary-container shadow-sm">
                 Complete{" "}
                 <span className="material-symbols-outlined text-[14px] ml-1">
@@ -388,7 +592,7 @@ export function Transfers() {
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-stone-50 border border-stone-100">
                   <div className="flex items-center space-x-3">
                     <span className="font-extrabold text-xs text-stone-900 capitalize">
-                      {(latestTx.type || "Transaction").replace("_", " ")}
+                      {(txType || "Transaction").replace("_", " ")}
                     </span>
                   </div>
                   <span className="font-extrabold font-mono text-base text-stone-900">
@@ -396,74 +600,8 @@ export function Transfers() {
                   </span>
                 </div>
 
-                <div className="space-y-2.5">
-                  <div
-                    className={`p-3.5 rounded-2xl border flex items-center justify-between ${step1Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
-                        1
-                      </span>
-                      <div>
-                        <h4 className="text-xs font-bold text-stone-900">
-                          Fiat Ramp
-                        </h4>
-                      </div>
-                    </div>
-                    {step1Active && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                        ✓ Settled
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    className={`p-3.5 rounded-2xl border flex items-center justify-between ${step2Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
-                        2
-                      </span>
-                      <div>
-                        <h4 className="text-xs font-bold text-stone-900">
-                          On-Chain Ledger
-                        </h4>
-                      </div>
-                    </div>
-                    {step2Active && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                        ✓ Confirmed
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    className={`p-3.5 rounded-2xl border flex items-center justify-between ${step3Active ? "bg-amber-50/40 border-amber-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <span
-                        className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${step3Active && !step4Active ? "bg-amber-400 text-stone-950 animate-pulse" : "bg-stone-200 text-stone-700"}`}
-                      >
-                        3
-                      </span>
-                      <div>
-                        <h4 className="text-xs font-bold text-stone-900">
-                          Protocol Swap
-                        </h4>
-                      </div>
-                    </div>
-                    {step3Active && !step4Active && (
-                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
-                        Processing
-                      </span>
-                    )}
-                    {step4Active && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                        ✓ Swapped
-                      </span>
-                    )}
-                  </div>
-                </div>
+                {/* Dynamic Steps Rendered Here */}
+                {renderPipelineSteps()}
 
                 <div className="pt-3 border-t border-stone-100 flex items-center justify-between text-[11px]">
                   <span className="text-stone-400 font-mono">

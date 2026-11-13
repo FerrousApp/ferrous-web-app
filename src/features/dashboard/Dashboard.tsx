@@ -10,13 +10,12 @@ import {
 import { useUIStore } from "../../store/uiStore";
 import type { Asset, Transaction } from "../../types/dashboard";
 
-const formatMoney = (amount: number | string, currency: "NGN" | "USD") => {
-  const val = typeof amount === "string" ? parseFloat(amount) : amount;
+const formatMoney = (amount: number, currency: "NGN" | "USD") => {
   return new Intl.NumberFormat("en-NG", {
     style: "currency",
     currency,
     minimumFractionDigits: 2,
-  }).format(val || 0);
+  }).format(amount || 0);
 };
 
 const TX_STATUS_MAP: Record<
@@ -57,7 +56,8 @@ export function Dashboard() {
     }
   }, [allAssets, setExchangeRate]);
 
-  const rawNgnBalance = parseFloat(balances?.NGN || "0");
+  // FIX: Removed parseFloat as balance is now strictly a number coming from the service
+  const rawNgnBalance = balances?.NGN || 0;
 
   const displayBalance =
     currency === "NGN"
@@ -66,7 +66,8 @@ export function Dashboard() {
 
   const activePortfolio =
     allAssets?.filter(
-      (asset: Asset) => balances && parseFloat(balances[asset.id] || "0") > 0,
+      // FIX: Removed parseFloat here as well
+      (asset: Asset) => balances && (balances[asset.id] || 0) > 0,
     ) || [];
 
   return (
@@ -112,7 +113,8 @@ export function Dashboard() {
         {activePortfolio.length > 0 && (
           <div className="flex flex-col space-y-space-sm">
             {activePortfolio.map((asset: Asset) => {
-              const userAssetBalance = parseFloat(balances![asset.id] || "0");
+              // FIX: Removed parseFloat here as well
+              const userAssetBalance = balances?.[asset.id] || 0;
               const yieldPercentage = asset.live_pricing
                 ? (asset.live_pricing.annualized_yield_bps / 100).toFixed(2)
                 : "0.00";

@@ -1,7 +1,8 @@
 // src/services/earn.service.ts
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
 import { useUIStore } from "../store/uiStore";
+import { useAuthStore } from "../store/authStore";
 import type {
   EarnAsset,
   InvestmentQuotePayload,
@@ -17,7 +18,6 @@ const earnApi = {
     const root = res as Record<string, unknown>;
     const data1 = root?.data as Record<string, unknown> | undefined;
 
-    // FIX: Safely check both the root response AND the nested Axios data object for 'meta'
     const meta = (root?.meta || data1?.meta) as
       | Record<string, unknown>
       | undefined;
@@ -59,6 +59,25 @@ const earnApi = {
     );
     return res;
   },
+
+  executeSwapFinalization: async (transactionId: string): Promise<void> => {
+    // FIX: Changed from .token to .accessToken based on AuthState interface
+    const token = useAuthStore.getState().accessToken;
+    if (!token)
+      throw new Error(
+        "Authentication token required for blockchain execution.",
+      );
+
+    await apiClient.post(
+      "/investments/execute-swap",
+      { transactionId },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+  },
 };
 
 export const useEarnAssets = () =>
@@ -75,3 +94,15 @@ export const useExecuteInvestment = () =>
     mutationFn: (payload: InvestmentExecutePayload) =>
       earnApi.executeInvestment(payload),
   });
+
+export const useExecuteSwap = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (transactionId: string) =>
+      earnApi.executeSwapFinalization(transactionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    },
+  });
+};

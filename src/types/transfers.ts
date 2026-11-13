@@ -27,8 +27,10 @@ export interface WithdrawalResponse {
   status: string;
 }
 
+// FIX: Added USDC_DELIVERED to the union type so the compiler knows it is a valid state
 export type GranularStatus =
   | "PROCESSING_FIAT_RAMP"
+  | "USDC_DELIVERED"
   | "PENDING_ON_CHAIN"
   | "PROCESSING_ON_CHAIN_SWAP"
   | "success"
