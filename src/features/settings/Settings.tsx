@@ -8,12 +8,14 @@ import {
   useUpdateProfile,
   useProfile,
 } from "../../services/settings.service";
+import { useSavedBanks, useSaveBank } from "../../services/transfers.service";
 import { authService } from "../../services/auth.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
+import { NIGERIAN_BANKS } from "../../lib/bank";
 import type { KycPayload, UpdateProfilePayload } from "../../types/settings";
 
-type TabId = "profile" | "verification" | "referrals";
+type TabId = "profile" | "verification" | "payouts" | "referrals";
 
 const COMMON_OCCUPATIONS = [
   "Accountant",
@@ -79,7 +81,6 @@ const COMMON_OCCUPATIONS = [
 ];
 
 export function Settings() {
-  // FIX: Destructure currency out of the UI store
   const { exchangeRate, currency } = useUIStore();
   const { user } = useAuthStore();
   const location = useLocation();
@@ -90,6 +91,7 @@ export function Settings() {
     if (
       tabParam === "profile" ||
       tabParam === "verification" ||
+      tabParam === "payouts" ||
       tabParam === "referrals"
     ) {
       return tabParam as TabId;
@@ -136,6 +138,17 @@ export function Settings() {
       extractDate(profile?.dateOfBirth) ||
       "",
   };
+
+  // Payouts State
+  const { data: savedBanksData, isLoading: isBanksLoading } = useSavedBanks();
+  const savedBanks = Array.isArray(savedBanksData) ? savedBanksData : [];
+  const saveBankMutation = useSaveBank();
+  const [bankForm, setBankForm] = useState({
+    bank_code: NIGERIAN_BANKS[0].code,
+    account_number: "",
+    alias: "",
+  });
+  const [bankError, setBankError] = useState<string | null>(null);
 
   // KYC State Machine
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
@@ -273,6 +286,39 @@ export function Settings() {
     }
   };
 
+  const handleSaveBank = async () => {
+    setBankError(null);
+    if (bankForm.account_number.length < 10) {
+      setBankError("Please enter a valid 10-digit account number.");
+      return;
+    }
+
+    // FIX: Added explicit type { code: string; name: string } to parameter 'b'
+    const selectedBank = NIGERIAN_BANKS.find(
+      (b: { code: string; name: string }) => b.code === bankForm.bank_code,
+    );
+
+    try {
+      await saveBankMutation.mutateAsync({
+        account_number: bankForm.account_number,
+        bank_code: bankForm.bank_code,
+        bank_name: selectedBank?.name || "",
+        alias: bankForm.alias || undefined,
+      });
+      setBankForm({
+        bank_code: NIGERIAN_BANKS[0].code,
+        account_number: "",
+        alias: "",
+      });
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      setBankError(
+        err?.response?.data?.message ||
+          "Failed to link account. Ensure it matches your KYC name.",
+      );
+    }
+  };
+
   const handleLogout = async () => {
     try {
       const userId = user?.id || "current-user-id";
@@ -292,12 +338,11 @@ export function Settings() {
 
   const isProfileLocked = kycStatus === "verified" || kycStatus === "approved";
 
-  // FIX: Dynamic Transaction Limit formatting based on selected currency
   const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
   const baseLimitUsd = 10000;
 
   const displayLimit =
-    kycStatus === "verified"
+    kycStatus === "verified" || kycStatus === "approved"
       ? currency === "NGN"
         ? `₦${(baseLimitUsd * currentRate).toLocaleString()}`
         : `$${baseLimitUsd.toLocaleString()}`
@@ -316,6 +361,11 @@ export function Settings() {
                 id: "verification" as TabId,
                 label: "Account Verification",
                 icon: "verified_user",
+              },
+              {
+                id: "payouts" as TabId,
+                label: "Payout Methods",
+                icon: "account_balance",
               },
               {
                 id: "referrals" as TabId,
@@ -366,7 +416,6 @@ export function Settings() {
                 </span>
               </div>
               <span className="text-xs font-bold text-stone-500 xl:text-right mt-1 xl:mt-0">
-                {/* FIX: Render dynamic limit here */}
                 {displayLimit}
               </span>
             </div>
@@ -1093,6 +1142,134 @@ export function Settings() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* --- PAYOUTS TAB --- */}
+          {activeTab === "payouts" && (
+            <div className="max-w-2xl bg-surface-container-lowest backdrop-blur-md border border-stone-300/60 rounded-3xl p-6 lg:p-7 shadow-sm space-y-6">
+              <div className="pb-3 border-b border-stone-300/70">
+                <h3 className="text-lg font-extrabold text-stone-900">
+                  Payout Methods
+                </h3>
+                <p className="text-xs text-stone-500 mt-1">
+                  Manage where your NGN fiat withdrawals are sent.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {isBanksLoading ? (
+                  <div className="py-4 text-center text-xs text-stone-500 animate-pulse">
+                    Loading saved accounts...
+                  </div>
+                ) : savedBanks.length > 0 ? (
+                  savedBanks.map((bank) => (
+                    <div
+                      key={bank.id}
+                      className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex items-center justify-between"
+                    >
+                      <div>
+                        <p className="text-sm font-bold text-stone-900">
+                          {bank.bank_name}
+                        </p>
+                        <p className="text-xs text-stone-500 font-mono mt-0.5">
+                          {bank.account_number}
+                        </p>
+                        <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-1">
+                          {bank.account_name}
+                        </p>
+                      </div>
+                      {bank.alias && (
+                        <span className="bg-stone-200 text-stone-600 text-[10px] font-bold px-2 py-1 rounded">
+                          {bank.alias}
+                        </span>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-xs font-semibold text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
+                    No payout methods saved.
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-stone-100">
+                <h4 className="text-xs font-bold text-stone-800 mb-4">
+                  Link a New Bank Account
+                </h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                      Select Bank
+                    </label>
+                    <select
+                      value={bankForm.bank_code}
+                      onChange={(e) =>
+                        setBankForm({ ...bankForm, bank_code: e.target.value })
+                      }
+                      className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer"
+                    >
+                      {NIGERIAN_BANKS.map(
+                        (b: { code: string; name: string }) => (
+                          <option key={b.code} value={b.code}>
+                            {b.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                        Account Number
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={10}
+                        value={bankForm.account_number}
+                        onChange={(e) =>
+                          setBankForm({
+                            ...bankForm,
+                            account_number: e.target.value.replace(/\D/g, ""),
+                          })
+                        }
+                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
+                        placeholder="0123456789"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                        Alias (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={bankForm.alias}
+                        onChange={(e) =>
+                          setBankForm({ ...bankForm, alias: e.target.value })
+                        }
+                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
+                        placeholder="e.g. Primary Savings"
+                      />
+                    </div>
+                  </div>
+
+                  {bankError && (
+                    <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl">
+                      {bankError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleSaveBank}
+                    disabled={saveBankMutation.isPending}
+                    className="w-full py-3 bg-stone-900 hover:bg-black text-white font-bold text-sm rounded-xl transition cursor-pointer disabled:opacity-50"
+                  >
+                    {saveBankMutation.isPending
+                      ? "Verifying & Saving..."
+                      : "Verify & Save Account"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

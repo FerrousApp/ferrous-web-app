@@ -1,5 +1,3 @@
-// src/types/transfers.ts
-
 export interface DvaDetails {
   bank_name: string;
   account_name: string;
@@ -11,7 +9,23 @@ export interface DvaDetails {
 export interface DvaResponse {
   kyc_status?: string;
   dva: DvaDetails | null;
-  dvas?: DvaDetails[]; // NEW: Multi-bank array support
+  dvas?: DvaDetails[];
+}
+
+// NEW: Saved Bank Interfaces
+export interface SavedBank {
+  id: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  alias?: string;
+}
+
+export interface SaveBankPayload {
+  account_number: string;
+  bank_code: string;
+  bank_name: string;
+  alias?: string;
 }
 
 export interface WithdrawalPayload {
@@ -27,7 +41,6 @@ export interface WithdrawalResponse {
   status: string;
 }
 
-// FIX: Added USDC_DELIVERED to the union type so the compiler knows it is a valid state
 export type GranularStatus =
   | "PROCESSING_FIAT_RAMP"
   | "USDC_DELIVERED"

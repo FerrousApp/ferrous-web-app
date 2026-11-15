@@ -1,9 +1,10 @@
 // src/features/transfers/Transfers.tsx
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   useDepositAccount,
   useWithdrawal,
+  useSavedBanks,
 } from "../../services/transfers.service";
 import {
   useWalletBalances,
@@ -29,16 +30,29 @@ export function Transfers() {
   } = useDepositAccount();
   const { data: balances } = useWalletBalances();
 
+  const { data: savedBanksData, isLoading: isBanksLoading } = useSavedBanks();
+
+  // FIX: Memoize the array to prevent exhaustive-deps warnings
+  const savedBanks = useMemo(
+    () => (Array.isArray(savedBanksData) ? savedBanksData : []),
+    [savedBanksData],
+  );
+
   const { data: txData } = useTransactions(10, 0);
   const withdrawalMutation = useWithdrawal();
   const executeSwapMutation = useExecuteSwap();
 
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // FIX: Removed "as any" and "parseFloat". Balances is safely typed as Record<string, number> now
-  const rawNgnBalance = balances?.NGN || 0;
+  // FIX: Derived state instead of useEffect. This prevents cascading renders.
+  const effectiveSelectedBankId =
+    selectedBankId || (savedBanks.length > 0 ? savedBanks[0].id : "");
+
+  const rawNgnBalance =
+    (balances as Record<string, number> | undefined)?.NGN || 0;
   const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
   const displayBalance =
     currency === "NGN" ? rawNgnBalance : rawNgnBalance / currentRate;
@@ -68,7 +82,8 @@ export function Transfers() {
 
   const amountNum = parseFloat(withdrawAmount);
   const isInputValid = !isNaN(amountNum) && amountNum > 0;
-  const isButtonActive = isVerified && isInputValid;
+  const hasBankSelected = effectiveSelectedBankId.length > 0;
+  const isButtonActive = isVerified && isInputValid && hasBankSelected;
 
   const handleCopyAccountNumber = (accountNumber: string) => {
     navigator.clipboard.writeText(accountNumber).then(() => {
@@ -78,7 +93,7 @@ export function Transfers() {
   };
 
   const handleWithdrawal = async () => {
-    if (!isVerified) return;
+    if (!isVerified || !hasBankSelected) return;
     setFeedbackMessage(null);
     try {
       if (!isInputValid) {
@@ -88,7 +103,7 @@ export function Transfers() {
 
       await withdrawalMutation.mutateAsync({
         amountInNgn: amountNum,
-        savedBankId: "mock-bank-uuid-1234",
+        savedBankId: effectiveSelectedBankId,
       });
 
       setFeedbackMessage("Withdrawal request submitted successfully.");
@@ -291,7 +306,7 @@ export function Transfers() {
             <button
               onClick={() => executeSwapMutation.mutate(latestTx.id)}
               disabled={executeSwapMutation.isPending}
-              className="w-full py-3.5 bg-primary hover:bg-primary-container text-on-primary-container font-extrabold text-xs tracking-wide rounded-xl shadow-sm transition active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full py-3.5 bg-primary hover:bg-primary-container text-on-primary-container font-extrabold text-xs tracking-wide rounded-xl shadow-sm transition active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
             >
               {executeSwapMutation.isPending ? (
                 <>
@@ -359,7 +374,7 @@ export function Transfers() {
                   virtual deposit accounts.
                 </p>
                 <button
-                  onClick={() => navigate("/settings")}
+                  onClick={() => navigate("/settings?tab=verification")}
                   className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   Verify Identity
@@ -403,7 +418,7 @@ export function Transfers() {
                             onClick={() =>
                               handleCopyAccountNumber(account.account_number)
                             }
-                            className="p-2 rounded-xl bg-white border border-stone-200 hover:bg-primary-container hover:text-on-primary-container hover:border-primary-container text-stone-600 transition-colors shadow-sm flex items-center gap-1 cursor-pointer"
+                            className="p-2 rounded-xl bg-white border border-stone-200 hover:bg-primary-container text-stone-600 transition-colors shadow-sm flex items-center gap-1 cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[16px]">
                               {copiedAccount === account.account_number
@@ -496,37 +511,81 @@ export function Transfers() {
             )}
 
             <div
-              className={`bg-surface-container-lowest rounded-3xl p-5 border-2 border-primary/40 shadow-sm space-y-3 transition-all duration-300 ${!isVerified ? "opacity-50 pointer-events-none select-none" : ""}`}
+              className={`bg-surface-container-lowest rounded-3xl p-5 border-2 border-primary/40 shadow-sm space-y-4 transition-all duration-300 ${!isVerified ? "opacity-50 pointer-events-none select-none" : ""}`}
             >
-              <div className="flex justify-between items-center">
-                <p className="text-xs font-bold text-stone-600">
-                  I would like to withdraw
-                </p>
-                <span className="text-[10px] text-amber-600 font-semibold">
-                  Available: ₦
-                  {rawNgnBalance.toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                  })}
-                </span>
+              {/* Target Bank Dropdown */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <p className="text-xs font-bold text-stone-600">
+                    Withdraw to Bank
+                  </p>
+                  <button
+                    onClick={() => navigate("/settings?tab=payouts")}
+                    className="text-[10px] text-primary hover:underline font-bold cursor-pointer"
+                  >
+                    Add Account
+                  </button>
+                </div>
+                {isBanksLoading ? (
+                  <div className="w-full bg-stone-50 rounded-2xl border border-stone-200 p-3 text-sm text-stone-500 animate-pulse">
+                    Loading saved banks...
+                  </div>
+                ) : savedBanks.length > 0 ? (
+                  <select
+                    value={effectiveSelectedBankId}
+                    onChange={(e) => setSelectedBankId(e.target.value)}
+                    className="w-full bg-stone-50 rounded-2xl border border-stone-200 p-3 text-sm font-bold text-stone-900 outline-none focus:border-primary cursor-pointer"
+                  >
+                    {savedBanks.map((bank) => (
+                      <option key={bank.id} value={bank.id}>
+                        {bank.bank_name} • {bank.account_number}{" "}
+                        {bank.alias ? `(${bank.alias})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="w-full bg-red-50 rounded-2xl border border-red-100 p-3 text-xs text-red-700 font-semibold flex items-center justify-between">
+                    No linked accounts found.
+                    <button
+                      onClick={() => navigate("/settings?tab=payouts")}
+                      className="bg-red-100 hover:bg-red-200 px-2 py-1 rounded text-red-800 cursor-pointer transition-colors"
+                    >
+                      Add One
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center bg-stone-50 rounded-2xl border border-stone-200 px-3.5 py-2.5 focus-within:border-primary">
-                <span className="text-sm font-bold text-stone-400 mr-1.5">
-                  ₦
-                </span>
-                <input
-                  type="number"
-                  value={withdrawAmount}
-                  onChange={(e) => setWithdrawAmount(e.target.value)}
-                  className="w-full bg-transparent font-extrabold text-xl text-stone-900 outline-none"
-                  placeholder="0.00"
-                />
-                <button
-                  onClick={() => setWithdrawAmount(rawNgnBalance.toString())}
-                  className="text-[10px] font-bold uppercase bg-stone-200 hover:bg-stone-300 text-stone-700 px-2 py-1 rounded-lg cursor-pointer"
-                >
-                  MAX
-                </button>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <p className="text-xs font-bold text-stone-600">Amount</p>
+                  <span className="text-[10px] text-amber-600 font-semibold">
+                    Available: ₦
+                    {rawNgnBalance.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="flex items-center bg-stone-50 rounded-2xl border border-stone-200 px-3.5 py-2.5 focus-within:border-primary">
+                  <span className="text-sm font-bold text-stone-400 mr-1.5">
+                    ₦
+                  </span>
+                  <input
+                    type="number"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    className="w-full bg-transparent font-extrabold text-xl text-stone-900 outline-none"
+                    placeholder="0.00"
+                  />
+                  <button
+                    onClick={() => setWithdrawAmount(rawNgnBalance.toString())}
+                    className="text-[10px] font-bold uppercase bg-stone-200 hover:bg-stone-300 text-stone-700 px-2 py-1 rounded-lg cursor-pointer transition-colors"
+                  >
+                    MAX
+                  </button>
+                </div>
               </div>
+
               {feedbackMessage && (
                 <p
                   className={`text-xs font-medium ${feedbackMessage.includes("successfully") ? "text-emerald-600" : "text-error"}`}
@@ -534,6 +593,7 @@ export function Transfers() {
                   {feedbackMessage}
                 </p>
               )}
+
               <button
                 onClick={handleWithdrawal}
                 disabled={!isButtonActive || withdrawalMutation.isPending}
@@ -600,7 +660,6 @@ export function Transfers() {
                   </span>
                 </div>
 
-                {/* Dynamic Steps Rendered Here */}
                 {renderPipelineSteps()}
 
                 <div className="pt-3 border-t border-stone-100 flex items-center justify-between text-[11px]">
