@@ -293,7 +293,6 @@ export function Settings() {
       return;
     }
 
-    // FIX: Added explicit type { code: string; name: string } to parameter 'b'
     const selectedBank = NIGERIAN_BANKS.find(
       (b: { code: string; name: string }) => b.code === bankForm.bank_code,
     );
@@ -1197,78 +1196,104 @@ export function Settings() {
                 <h4 className="text-xs font-bold text-stone-800 mb-4">
                   Link a New Bank Account
                 </h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                      Select Bank
-                    </label>
-                    <select
-                      value={bankForm.bank_code}
-                      onChange={(e) =>
-                        setBankForm({ ...bankForm, bank_code: e.target.value })
-                      }
-                      className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer"
+
+                {/* FIX: KYC Lock applied to adding a new bank */}
+                {!isProfileLocked ? (
+                  <div className="bg-stone-50 border border-stone-200 rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-3">
+                    <span className="material-symbols-outlined text-[32px] text-stone-300">
+                      lock
+                    </span>
+                    <p className="text-sm font-bold text-stone-900">
+                      Verification Required
+                    </p>
+                    <p className="text-xs text-stone-500 max-w-[250px]">
+                      You must complete Identity Verification before linking a
+                      bank account to ensure compliance with payout regulations.
+                    </p>
+                    <button
+                      onClick={() => setActiveTab("verification")}
+                      className="px-5 py-2.5 mt-2 bg-stone-200 hover:bg-stone-300 text-stone-800 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                     >
-                      {NIGERIAN_BANKS.map(
-                        (b: { code: string; name: string }) => (
-                          <option key={b.code} value={b.code}>
-                            {b.name}
-                          </option>
-                        ),
-                      )}
-                    </select>
+                      Go to Verification
+                    </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                ) : (
+                  <div className="space-y-4">
                     <div>
                       <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                        Account Number
+                        Select Bank
                       </label>
-                      <input
-                        type="text"
-                        maxLength={10}
-                        value={bankForm.account_number}
+                      <select
+                        value={bankForm.bank_code}
                         onChange={(e) =>
                           setBankForm({
                             ...bankForm,
-                            account_number: e.target.value.replace(/\D/g, ""),
+                            bank_code: e.target.value,
                           })
                         }
-                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
-                        placeholder="0123456789"
-                      />
+                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer"
+                      >
+                        {NIGERIAN_BANKS.map(
+                          (b: { code: string; name: string }) => (
+                            <option key={b.code} value={b.code}>
+                              {b.name}
+                            </option>
+                          ),
+                        )}
+                      </select>
                     </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
-                        Alias (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={bankForm.alias}
-                        onChange={(e) =>
-                          setBankForm({ ...bankForm, alias: e.target.value })
-                        }
-                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
-                        placeholder="e.g. Primary Savings"
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                          Account Number
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={10}
+                          value={bankForm.account_number}
+                          onChange={(e) =>
+                            setBankForm({
+                              ...bankForm,
+                              account_number: e.target.value.replace(/\D/g, ""),
+                            })
+                          }
+                          className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
+                          placeholder="0123456789"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
+                          Alias (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={bankForm.alias}
+                          onChange={(e) =>
+                            setBankForm({ ...bankForm, alias: e.target.value })
+                          }
+                          className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
+                          placeholder="e.g. Primary Savings"
+                        />
+                      </div>
                     </div>
+
+                    {bankError && (
+                      <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl">
+                        {bankError}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleSaveBank}
+                      disabled={saveBankMutation.isPending}
+                      className="w-full py-3 bg-stone-900 hover:bg-black text-white font-bold text-sm rounded-xl transition cursor-pointer disabled:opacity-50"
+                    >
+                      {saveBankMutation.isPending
+                        ? "Verifying & Saving..."
+                        : "Verify & Save Account"}
+                    </button>
                   </div>
-
-                  {bankError && (
-                    <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl">
-                      {bankError}
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleSaveBank}
-                    disabled={saveBankMutation.isPending}
-                    className="w-full py-3 bg-stone-900 hover:bg-black text-white font-bold text-sm rounded-xl transition cursor-pointer disabled:opacity-50"
-                  >
-                    {saveBankMutation.isPending
-                      ? "Verifying & Saving..."
-                      : "Verify & Save Account"}
-                  </button>
-                </div>
+                )}
               </div>
             </div>
           )}
