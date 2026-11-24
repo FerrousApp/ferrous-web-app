@@ -186,8 +186,20 @@ export function Settings() {
     account_number: "",
     alias: "",
   });
+  const [bankSearch, setBankSearch] = useState("");
+  const [showBankDropdown, setShowBankDropdown] = useState(false);
   const [bankError, setBankError] = useState<string | null>(null);
   const [bankSuccess, setBankSuccess] = useState<string | null>(null);
+
+  const filteredBanks = useMemo<BankOption[]>(() => {
+    const query = bankSearch.trim().toLowerCase();
+    if (!query) return bankList;
+    return bankList.filter(
+      (b: BankOption) =>
+        b.name.toLowerCase().includes(query) ||
+        b.code.toLowerCase().includes(query),
+    );
+  }, [bankList, bankSearch]);
 
   const {
     data: resolvedAccount,
@@ -330,7 +342,7 @@ export function Settings() {
     setBankSuccess(null);
 
     if (!bankForm.bank_code) {
-      setBankError("Please select a bank.");
+      setBankError("Please select a bank from the list.");
       return;
     }
 
@@ -356,6 +368,8 @@ export function Settings() {
         alias: bankForm.alias.trim() || undefined,
       });
       setBankForm({ bank_code: "", account_number: "", alias: "" });
+      setBankSearch("");
+      setShowBankDropdown(false);
       setBankSuccess("Bank account verified and linked.");
     } catch (error: unknown) {
       setBankError(
@@ -1295,34 +1309,99 @@ export function Settings() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div>
+                    <div className="relative">
                       <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
                         Select Bank
                       </label>
-                      <select
-                        value={bankForm.bank_code}
-                        disabled={isBankListLoading}
-                        onChange={(e) => {
-                          setBankError(null);
-                          setBankSuccess(null);
-                          setBankForm({
-                            ...bankForm,
-                            bank_code: e.target.value,
-                          });
-                        }}
-                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer disabled:opacity-60"
-                      >
-                        <option value="">
-                          {isBankListLoading
-                            ? "Loading banks..."
-                            : "Select your bank"}
-                        </option>
-                        {bankList.map((b: BankOption) => (
-                          <option key={b.code} value={b.code}>
-                            {b.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative flex items-center">
+                        <span className="material-symbols-outlined text-[18px] text-stone-400 absolute left-3 pointer-events-none">
+                          search
+                        </span>
+                        <input
+                          type="text"
+                          value={bankSearch}
+                          disabled={isBankListLoading}
+                          onFocus={() => setShowBankDropdown(true)}
+                          onBlur={() => setShowBankDropdown(false)}
+                          onChange={(e) => {
+                            setBankError(null);
+                            setBankSuccess(null);
+                            setBankSearch(e.target.value);
+                            setShowBankDropdown(true);
+                            if (bankForm.bank_code) {
+                              setBankForm({ ...bankForm, bank_code: "" });
+                            }
+                          }}
+                          placeholder={
+                            isBankListLoading
+                              ? "Loading banks..."
+                              : "Search bank name..."
+                          }
+                          className="w-full text-sm font-bold text-stone-900 py-3 pl-9 pr-9 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary disabled:opacity-60"
+                        />
+                        {bankSearch && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setBankSearch("");
+                              setBankForm({ ...bankForm, bank_code: "" });
+                              setBankError(null);
+                              setBankSuccess(null);
+                              setShowBankDropdown(true);
+                            }}
+                            aria-label="Clear selected bank"
+                            className="absolute right-2.5 p-1 text-stone-400 hover:text-stone-700 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[16px] block">
+                              close
+                            </span>
+                          </button>
+                        )}
+                      </div>
+
+                      {showBankDropdown && !isBankListLoading && (
+                        <div className="absolute z-50 w-full mt-2 bg-white border border-stone-200 rounded-2xl shadow-xl max-h-60 overflow-y-auto py-1.5">
+                          {filteredBanks.length > 0 ? (
+                            filteredBanks.map((b: BankOption) => {
+                              const isSelected = b.code === bankForm.bank_code;
+                              return (
+                                <button
+                                  type="button"
+                                  key={b.code}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setBankError(null);
+                                    setBankSuccess(null);
+                                    setBankForm({
+                                      ...bankForm,
+                                      bank_code: b.code,
+                                    });
+                                    setBankSearch(b.name);
+                                    setShowBankDropdown(false);
+                                  }}
+                                  className={`w-full text-left px-4 py-2.5 text-sm font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                                    isSelected
+                                      ? "bg-primary/10 text-primary"
+                                      : "text-stone-700 hover:bg-stone-100 hover:text-primary"
+                                  }`}
+                                >
+                                  <span className="truncate">{b.name}</span>
+                                  {isSelected && (
+                                    <span className="material-symbols-outlined text-[16px] shrink-0 ml-2">
+                                      check
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="px-4 py-3 text-xs font-semibold text-stone-400 text-center">
+                              No banks found matching "{bankSearch}"
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
