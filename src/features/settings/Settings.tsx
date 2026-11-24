@@ -1,5 +1,5 @@
 // src/features/settings/Settings.tsx
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import imageCompression from "browser-image-compression";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
@@ -8,12 +8,17 @@ import {
   useUpdateProfile,
   useProfile,
 } from "../../services/settings.service";
-import { useSavedBanks, useSaveBank } from "../../services/transfers.service";
+import {
+  useBankList,
+  useResolveBankAccount,
+  useSavedBanks,
+  useSaveBank,
+} from "../../services/transfers.service";
 import { authService } from "../../services/auth.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
-import { NIGERIAN_BANKS } from "../../lib/bank";
 import type { KycPayload, UpdateProfilePayload } from "../../types/settings";
+import type { BankOption } from "../../types/transfers";
 
 type TabId = "profile" | "verification" | "payouts" | "referrals";
 
@@ -80,6 +85,20 @@ const COMMON_OCCUPATIONS = [
   "Writer",
 ];
 
+const extractErrorMessage = (error: unknown, fallback: string): string => {
+  if (!error || typeof error !== "object") return fallback;
+  const err = error as {
+    response?: { data?: { message?: string; error?: string } };
+    message?: string;
+  };
+  return (
+    err.response?.data?.message ||
+    err.response?.data?.error ||
+    err.message ||
+    fallback
+  );
+};
+
 export function Settings() {
   const { exchangeRate, currency } = useUIStore();
   const { user } = useAuthStore();
@@ -113,7 +132,6 @@ export function Settings() {
     | Record<string, string | undefined>
     | undefined;
 
-  // Extract Name from Auth Store for Placeholders
   const fallbackFirstName =
     user?.first_name ||
     user?.firstName ||
@@ -139,16 +157,42 @@ export function Settings() {
       "",
   };
 
+  const kycStatus =
+    profile?.busha_status || profile?.kyc_status || profile?.kycStatus;
+  const kycRejectionReason =
+    profile?.busha_rejection_reason ||
+    profile?.kyc_rejection_reason ||
+    "Your verification was unsuccessful. Please review your details and try again.";
+
+  const isProfileLocked = kycStatus === "verified" || kycStatus === "approved";
+
   // Payouts State
   const { data: savedBanksData, isLoading: isBanksLoading } = useSavedBanks();
   const savedBanks = Array.isArray(savedBanksData) ? savedBanksData : [];
+
+  const { data: bankListData, isLoading: isBankListLoading } = useBankList(
+    activeTab === "payouts" && isProfileLocked,
+  );
+  const bankList = useMemo<BankOption[]>(() => {
+    if (!Array.isArray(bankListData)) return [];
+    return [...bankListData].sort((a, b) => a.name.localeCompare(b.name));
+  }, [bankListData]);
+
   const saveBankMutation = useSaveBank();
   const [bankForm, setBankForm] = useState({
-    bank_code: NIGERIAN_BANKS[0].code,
+    bank_code: "",
     account_number: "",
     alias: "",
   });
   const [bankError, setBankError] = useState<string | null>(null);
+  const [bankSuccess, setBankSuccess] = useState<string | null>(null);
+
+  // Auto-triggers POST /v1/utilities/banks/resolve when account_number hits 10 digits & bank is selected
+  const {
+    data: resolvedAccount,
+    isFetching: isResolvingBank,
+    error: resolveBankError,
+  } = useResolveBankAccount(bankForm.account_number, bankForm.bank_code);
 
   // KYC State Machine
   const [kycStep, setKycStep] = useState<1 | 2 | 3>(1);
@@ -251,13 +295,10 @@ export function Settings() {
     } catch (error) {
       console.error("KYC Submission failed", error);
 
-      const err = error as {
-        response?: { data?: { message?: string } };
-        message?: string;
-      };
-
-      const errorMsg =
-        err?.response?.data?.message || err?.message || JSON.stringify(error);
+      const errorMsg = extractErrorMessage(
+        error,
+        "An error occurred during verification submission. Please try again.",
+      );
 
       if (
         errorMsg.toLowerCase().includes("duplicate") ||
@@ -267,10 +308,7 @@ export function Settings() {
           "This ID is already registered in the compliance network. Please contact support.",
         );
       } else {
-        setKycError(
-          errorMsg ||
-            "An error occurred during verification submission. Please try again.",
-        );
+        setKycError(errorMsg);
       }
     }
   };
@@ -288,13 +326,25 @@ export function Settings() {
 
   const handleSaveBank = async () => {
     setBankError(null);
-    if (bankForm.account_number.length < 10) {
+    setBankSuccess(null);
+
+    if (!bankForm.bank_code) {
+      setBankError("Please select a bank.");
+      return;
+    }
+
+    if (bankForm.account_number.length !== 10) {
       setBankError("Please enter a valid 10-digit account number.");
       return;
     }
 
-    const selectedBank = NIGERIAN_BANKS.find(
-      (b: { code: string; name: string }) => b.code === bankForm.bank_code,
+    if (!resolvedAccount?.account_name) {
+      setBankError("Wait for account verification to complete before saving.");
+      return;
+    }
+
+    const selectedBank = bankList.find(
+      (b: BankOption) => b.code === bankForm.bank_code,
     );
 
     try {
@@ -302,18 +352,16 @@ export function Settings() {
         account_number: bankForm.account_number,
         bank_code: bankForm.bank_code,
         bank_name: selectedBank?.name || "",
-        alias: bankForm.alias || undefined,
+        alias: bankForm.alias.trim() || undefined,
       });
-      setBankForm({
-        bank_code: NIGERIAN_BANKS[0].code,
-        account_number: "",
-        alias: "",
-      });
+      setBankForm({ bank_code: "", account_number: "", alias: "" });
+      setBankSuccess("Bank account verified and linked.");
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { message?: string } } };
       setBankError(
-        err?.response?.data?.message ||
+        extractErrorMessage(
+          error,
           "Failed to link account. Ensure it matches your KYC name.",
+        ),
       );
     }
   };
@@ -328,26 +376,21 @@ export function Settings() {
     }
   };
 
-  const kycStatus =
-    profile?.busha_status || profile?.kyc_status || profile?.kycStatus;
-  const kycRejectionReason =
-    profile?.busha_rejection_reason ||
-    profile?.kyc_rejection_reason ||
-    "Your verification was unsuccessful. Please review your details and try again.";
-
-  const isProfileLocked = kycStatus === "verified" || kycStatus === "approved";
-
   const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
   const baseLimitUsd = 10000;
 
-  const displayLimit =
-    kycStatus === "verified" || kycStatus === "approved"
-      ? currency === "NGN"
-        ? `₦${(baseLimitUsd * currentRate).toLocaleString()}`
-        : `$${baseLimitUsd.toLocaleString()}`
-      : currency === "NGN"
-        ? "₦0"
-        : "$0";
+  const displayLimit = isProfileLocked
+    ? currency === "NGN"
+      ? `₦${(baseLimitUsd * currentRate).toLocaleString()}`
+      : `$${baseLimitUsd.toLocaleString()}`
+    : currency === "NGN"
+      ? "₦0"
+      : "$0";
+
+  const canSaveBank =
+    Boolean(resolvedAccount?.account_name) &&
+    !isResolvingBank &&
+    !saveBankMutation.isPending;
 
   return (
     <DashboardLayout>
@@ -465,7 +508,7 @@ export function Settings() {
                 </div>
               )}
 
-              {kycStatus === "verified" || kycStatus === "approved" ? (
+              {isProfileLocked ? (
                 <div className="bg-surface-container-lowest backdrop-blur-md border border-emerald-500/30 rounded-3xl p-8 lg:p-12 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
                   <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 border-4 border-emerald-50 flex items-center justify-center shadow-sm">
                     <span className="material-symbols-outlined text-[40px]">
@@ -1197,7 +1240,6 @@ export function Settings() {
                   Link a New Bank Account
                 </h4>
 
-                {/* FIX: KYC Lock applied to adding a new bank */}
                 {!isProfileLocked ? (
                   <div className="bg-stone-50 border border-stone-200 rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-3">
                     <span className="material-symbols-outlined text-[32px] text-stone-300">
@@ -1225,23 +1267,30 @@ export function Settings() {
                       </label>
                       <select
                         value={bankForm.bank_code}
-                        onChange={(e) =>
+                        disabled={isBankListLoading}
+                        onChange={(e) => {
+                          setBankError(null);
+                          setBankSuccess(null);
                           setBankForm({
                             ...bankForm,
                             bank_code: e.target.value,
-                          })
-                        }
-                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer"
+                          });
+                        }}
+                        className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary cursor-pointer disabled:opacity-60"
                       >
-                        {NIGERIAN_BANKS.map(
-                          (b: { code: string; name: string }) => (
-                            <option key={b.code} value={b.code}>
-                              {b.name}
-                            </option>
-                          ),
-                        )}
+                        <option value="">
+                          {isBankListLoading
+                            ? "Loading banks..."
+                            : "Select your bank"}
+                        </option>
+                        {bankList.map((b: BankOption) => (
+                          <option key={b.code} value={b.code}>
+                            {b.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
+
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[11px] font-bold text-stone-500 uppercase mb-1">
@@ -1249,15 +1298,18 @@ export function Settings() {
                         </label>
                         <input
                           type="text"
+                          inputMode="numeric"
                           maxLength={10}
                           value={bankForm.account_number}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            setBankError(null);
+                            setBankSuccess(null);
                             setBankForm({
                               ...bankForm,
                               account_number: e.target.value.replace(/\D/g, ""),
-                            })
-                          }
-                          className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary"
+                            });
+                          }}
+                          className="w-full text-sm font-bold text-stone-900 p-3 rounded-xl border border-stone-200 bg-stone-50 outline-none focus:border-primary font-mono"
                           placeholder="0123456789"
                         />
                       </div>
@@ -1277,20 +1329,63 @@ export function Settings() {
                       </div>
                     </div>
 
+                    {/* Live Account Name Resolution Status */}
+                    {isResolvingBank && (
+                      <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 flex items-center gap-2 text-xs font-semibold text-stone-600">
+                        <span className="material-symbols-outlined animate-spin text-[16px] text-primary">
+                          progress_activity
+                        </span>
+                        <span>Resolving account name...</span>
+                      </div>
+                    )}
+
+                    {!isResolvingBank && resolvedAccount?.account_name && (
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="material-symbols-outlined text-[18px] text-emerald-600 shrink-0">
+                            check_circle
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
+                              Account Holder
+                            </p>
+                            <p className="text-xs font-extrabold text-emerald-900 uppercase truncate">
+                              {resolvedAccount.account_name}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isResolvingBank && resolveBankError && (
+                      <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl border border-red-200">
+                        {extractErrorMessage(
+                          resolveBankError,
+                          "Could not verify account details. Check the bank and account number.",
+                        )}
+                      </div>
+                    )}
+
                     {bankError && (
-                      <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl">
+                      <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl border border-red-200">
                         {bankError}
+                      </div>
+                    )}
+
+                    {bankSuccess && (
+                      <div className="p-3 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200">
+                        {bankSuccess}
                       </div>
                     )}
 
                     <button
                       onClick={handleSaveBank}
-                      disabled={saveBankMutation.isPending}
-                      className="w-full py-3 bg-stone-900 hover:bg-black text-white font-bold text-sm rounded-xl transition cursor-pointer disabled:opacity-50"
+                      disabled={!canSaveBank}
+                      className="w-full py-3 bg-stone-900 hover:bg-black text-white font-bold text-sm rounded-xl transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {saveBankMutation.isPending
-                        ? "Verifying & Saving..."
-                        : "Verify & Save Account"}
+                        ? "Saving Account..."
+                        : "Save Bank Account"}
                     </button>
                   </div>
                 )}

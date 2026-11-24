@@ -1,3 +1,4 @@
+// src/types/transfers.ts
 export interface DvaDetails {
   bank_name: string;
   account_name: string;
@@ -12,10 +13,28 @@ export interface DvaResponse {
   dvas?: DvaDetails[];
 }
 
-// NEW: Saved Bank Interfaces
+export interface BankOption {
+  name: string;
+  code: string;
+  country_id?: string;
+  currency_id?: string;
+}
+
+export interface ResolveBankPayload {
+  account_number: string;
+  bank_code: string;
+}
+
+export interface ResolveBankResponse {
+  account_name: string;
+  account_number: string;
+  bank_code: string;
+}
+
 export interface SavedBank {
   id: string;
   bank_name: string;
+  bank_code?: string;
   account_number: string;
   account_name: string;
   alias?: string;
