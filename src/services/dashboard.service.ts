@@ -3,22 +3,39 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
 import type { Asset, TransactionsResponse } from "../types/dashboard";
 
-// 1. Strictly-typed recursive extractor to pierce through all Axios AND backend wrappers
-const extractBalances = (payload: unknown): Record<string, string> | null => {
+const parseBalanceValue = (value: unknown): number => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") return parseFloat(value) || 0;
+
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if ("amount" in obj && obj.amount !== undefined) {
+      return parseFloat(String(obj.amount)) || 0;
+    }
+    if ("fiat" in obj && obj.fiat && typeof obj.fiat === "object") {
+      const fiat = obj.fiat as Record<string, unknown>;
+      if ("amount" in fiat && fiat.amount !== undefined) {
+        return parseFloat(String(fiat.amount)) || 0;
+      }
+    }
+  }
+
+  return 0;
+};
+
+const extractBalances = (payload: unknown): Record<string, unknown> | null => {
   if (!payload || typeof payload !== "object") return null;
 
   const record = payload as Record<string, unknown>;
 
-  // If we found the "balances" key, return it
   if (
     "balances" in record &&
     record.balances &&
     typeof record.balances === "object"
   ) {
-    return record.balances as Record<string, string>;
+    return record.balances as Record<string, unknown>;
   }
 
-  // If there is a "data" wrapper, drill down one layer deeper
   if ("data" in record && record.data) {
     return extractBalances(record.data);
   }
@@ -26,10 +43,8 @@ const extractBalances = (payload: unknown): Record<string, string> | null => {
   return null;
 };
 
-// 2. Recursive extractor for arrays
 const extractArray = <T>(payload: unknown): T[] | null => {
   if (!payload || typeof payload !== "object") return null;
-
   if (Array.isArray(payload)) return payload as T[];
 
   const record = payload as Record<string, unknown>;
@@ -40,7 +55,6 @@ const extractArray = <T>(payload: unknown): T[] | null => {
   return null;
 };
 
-// 3. Recursive extractor for Transactions
 const extractTransactions = (payload: unknown): TransactionsResponse | null => {
   if (!payload || typeof payload !== "object") return null;
 
@@ -60,15 +74,11 @@ const extractTransactions = (payload: unknown): TransactionsResponse | null => {
 const dashboardApi = {
   getBalances: async (): Promise<Record<string, number>> => {
     const res = await apiClient.get<unknown, unknown>("/wallet/balances");
-
-    // The recursive extractor guarantees we find the balances object whether the
-    // shape is res.balances, res.data.balances, or res.data.data.balances
     const rawBalances = extractBalances(res) || {};
 
     const parsedBalances: Record<string, number> = {};
     for (const [key, value] of Object.entries(rawBalances)) {
-      // Cast to string to satisfy TS, then parse to a float
-      parsedBalances[key] = parseFloat(String(value)) || 0;
+      parsedBalances[key] = parseBalanceValue(value);
     }
 
     return parsedBalances;
@@ -105,7 +115,6 @@ const dashboardApi = {
   },
 };
 
-// React Query Hooks
 export const useWalletBalances = () =>
   useQuery({
     queryKey: ["balances"],
