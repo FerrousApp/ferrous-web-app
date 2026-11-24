@@ -89,10 +89,16 @@ const transfersApi = {
   ): Promise<WithdrawalResponse> => {
     const idempotencyKey = crypto.randomUUID();
     const res = await apiClient.post<unknown, unknown>(
-      "/withdrawals/initiate",
-      payload,
+      "/withdrawals",
       {
-        headers: { "x-idempotency-key": idempotencyKey },
+        amountInNgn: Number(payload.amountInNgn),
+        savedBankId: payload.savedBankId,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-idempotency-key": idempotencyKey,
+        },
       },
     );
     return unwrapResponse<WithdrawalResponse>(res);
