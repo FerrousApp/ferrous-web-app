@@ -51,7 +51,7 @@ const transfersApi = {
   },
 
   getBankList: async (): Promise<BankOption[]> => {
-    const res = await apiClient.get<unknown, unknown>("/utilities/banks/list");
+    const res = await apiClient.get<unknown, unknown>("/utility/banks/list");
     const data = unwrapResponse<BankOption[]>(res);
     return Array.isArray(data) ? data : [];
   },
@@ -60,24 +60,28 @@ const transfersApi = {
     payload: ResolveBankPayload,
   ): Promise<ResolveBankResponse> => {
     const res = await apiClient.post<unknown, unknown>(
-      "/utilities/banks/resolve",
+      "/utility/banks/resolve",
       payload,
     );
     return unwrapResponse<ResolveBankResponse>(res);
   },
 
   getSavedBanks: async (): Promise<SavedBank[]> => {
-    const res = await apiClient.get<unknown, unknown>("/utilities/banks");
+    const res = await apiClient.get<unknown, unknown>("/utility/banks");
     const data = unwrapResponse<SavedBank[]>(res);
     return Array.isArray(data) ? data : [];
   },
 
   saveBank: async (payload: SaveBankPayload): Promise<SavedBank> => {
     const res = await apiClient.post<unknown, unknown>(
-      "/utilities/banks",
+      "/utility/banks",
       payload,
     );
     return unwrapResponse<SavedBank>(res);
+  },
+
+  deleteBank: async (accountId: string): Promise<void> => {
+    await apiClient.delete<unknown, unknown>(`/utility/banks/${accountId}`);
   },
 
   requestWithdrawal: async (
@@ -135,6 +139,16 @@ export const useSaveBank = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: SaveBankPayload) => transfersApi.saveBank(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["saved-banks"] });
+    },
+  });
+};
+
+export const useDeleteBank = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => transfersApi.deleteBank(accountId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["saved-banks"] });
     },

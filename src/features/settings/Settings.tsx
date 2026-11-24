@@ -13,12 +13,13 @@ import {
   useResolveBankAccount,
   useSavedBanks,
   useSaveBank,
+  useDeleteBank,
 } from "../../services/transfers.service";
 import { authService } from "../../services/auth.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
 import type { KycPayload, UpdateProfilePayload } from "../../types/settings";
-import type { BankOption } from "../../types/transfers";
+import type { BankOption, SavedBank } from "../../types/transfers";
 
 type TabId = "profile" | "verification" | "payouts" | "referrals";
 
@@ -179,6 +180,7 @@ export function Settings() {
   }, [bankListData]);
 
   const saveBankMutation = useSaveBank();
+  const deleteBankMutation = useDeleteBank();
   const [bankForm, setBankForm] = useState({
     bank_code: "",
     account_number: "",
@@ -187,7 +189,6 @@ export function Settings() {
   const [bankError, setBankError] = useState<string | null>(null);
   const [bankSuccess, setBankSuccess] = useState<string | null>(null);
 
-  // Auto-triggers POST /v1/utilities/banks/resolve when account_number hits 10 digits & bank is selected
   const {
     data: resolvedAccount,
     isFetching: isResolvingBank,
@@ -362,6 +363,19 @@ export function Settings() {
           error,
           "Failed to link account. Ensure it matches your KYC name.",
         ),
+      );
+    }
+  };
+
+  const handleDeleteBank = async (accountId: string) => {
+    setBankError(null);
+    setBankSuccess(null);
+    try {
+      await deleteBankMutation.mutateAsync(accountId);
+      setBankSuccess("Bank account removed.");
+    } catch (error: unknown) {
+      setBankError(
+        extractErrorMessage(error, "Failed to remove bank account."),
       );
     }
   };
@@ -1205,29 +1219,49 @@ export function Settings() {
                     Loading saved accounts...
                   </div>
                 ) : savedBanks.length > 0 ? (
-                  savedBanks.map((bank) => (
-                    <div
-                      key={bank.id}
-                      className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex items-center justify-between"
-                    >
-                      <div>
-                        <p className="text-sm font-bold text-stone-900">
-                          {bank.bank_name}
-                        </p>
-                        <p className="text-xs text-stone-500 font-mono mt-0.5">
-                          {bank.account_number}
-                        </p>
-                        <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-1">
-                          {bank.account_name}
-                        </p>
+                  savedBanks.map((bank: SavedBank) => {
+                    const isDeleting =
+                      deleteBankMutation.isPending &&
+                      deleteBankMutation.variables === bank.id;
+
+                    return (
+                      <div
+                        key={bank.id}
+                        className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-stone-900 truncate">
+                            {bank.bank_name}
+                          </p>
+                          <p className="text-xs text-stone-500 font-mono mt-0.5">
+                            {bank.account_number}
+                          </p>
+                          <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-1 truncate">
+                            {bank.account_name}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {bank.alias && (
+                            <span className="bg-stone-200 text-stone-600 text-[10px] font-bold px-2 py-1 rounded">
+                              {bank.alias}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleDeleteBank(bank.id)}
+                            disabled={deleteBankMutation.isPending}
+                            title="Delete bank account"
+                            className="p-2 rounded-xl bg-white border border-stone-200 text-stone-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <span
+                              className={`material-symbols-outlined text-[18px] block ${isDeleting ? "animate-spin" : ""}`}
+                            >
+                              {isDeleting ? "progress_activity" : "delete"}
+                            </span>
+                          </button>
+                        </div>
                       </div>
-                      {bank.alias && (
-                        <span className="bg-stone-200 text-stone-600 text-[10px] font-bold px-2 py-1 rounded">
-                          {bank.alias}
-                        </span>
-                      )}
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="p-4 text-center text-xs font-semibold text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
                     No payout methods saved.
