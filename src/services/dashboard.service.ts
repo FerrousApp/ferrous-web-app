@@ -13,19 +13,21 @@ import type {
   TransactionsResponse,
 } from "../types/dashboard";
 
+const ENVELOPE_KEYS = new Set(["success", "status", "message", "meta"]);
+
 const parseBalanceValue = (value: unknown): number => {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string") return parseFloat(value) || 0;
+  if (typeof value === "string") return parseFloat(value || "0") || 0;
 
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     if ("amount" in obj && obj.amount !== undefined) {
-      return parseFloat(String(obj.amount)) || 0;
+      return parseFloat(String(obj.amount || "0")) || 0;
     }
     if ("fiat" in obj && obj.fiat && typeof obj.fiat === "object") {
       const fiat = obj.fiat as Record<string, unknown>;
       if ("amount" in fiat && fiat.amount !== undefined) {
-        return parseFloat(String(fiat.amount)) || 0;
+        return parseFloat(String(fiat.amount || "0")) || 0;
       }
     }
   }
@@ -54,23 +56,29 @@ const syncMarketMeta = (res: unknown): void => {
 };
 
 const extractBalances = (payload: unknown): Record<string, unknown> | null => {
-  if (!payload || typeof payload !== "object") return null;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
 
   const record = payload as Record<string, unknown>;
 
   if (
     "balances" in record &&
     record.balances &&
-    typeof record.balances === "object"
+    typeof record.balances === "object" &&
+    !Array.isArray(record.balances)
   ) {
     return record.balances as Record<string, unknown>;
   }
 
-  if ("data" in record && record.data) {
+  if ("data" in record && record.data && typeof record.data === "object") {
     return extractBalances(record.data);
   }
 
-  return null;
+  const entries = Object.entries(record).filter(
+    ([key]) => !ENVELOPE_KEYS.has(key),
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
 };
 
 const extractArray = <T>(payload: unknown): T[] | null => {
@@ -106,8 +114,12 @@ const dashboardApi = {
     const res = await apiClient.get<unknown, unknown>("/wallet/balances");
     const rawBalances = extractBalances(res) || {};
 
-    const parsedBalances: Record<string, number> = {};
+    const parsedBalances: Record<string, number> = {
+      NGN: parseBalanceValue(rawBalances.NGN),
+    };
+
     for (const [key, value] of Object.entries(rawBalances)) {
+      if (key === "NGN") continue;
       parsedBalances[key] = parseBalanceValue(value);
     }
 

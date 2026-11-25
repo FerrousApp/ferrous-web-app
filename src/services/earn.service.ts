@@ -132,9 +132,17 @@ export const useExecuteInvestment = () => {
   return useMutation({
     mutationFn: (payload: InvestmentExecutePayload) =>
       earnApi.executeInvestment(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["balances"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["balances"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["transactions"],
+          refetchType: "all",
+        }),
+      ]);
     },
   });
 };
@@ -145,9 +153,17 @@ export const useExecuteSwap = () => {
   return useMutation({
     mutationFn: (transactionId: string) =>
       earnApi.executeSwapFinalization(transactionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["balances"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["balances"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["transactions"],
+          refetchType: "all",
+        }),
+      ]);
     },
   });
 };

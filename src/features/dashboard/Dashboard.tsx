@@ -1,4 +1,5 @@
 // src/features/dashboard/Dashboard.tsx
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   useWalletBalances,
@@ -7,6 +8,11 @@ import {
   useTransactions,
 } from "../../services/dashboard.service";
 import { useUIStore } from "../../store/uiStore";
+import {
+  buildPortfolioSummary,
+  formatTokenQuantity,
+  type PortfolioHolding,
+} from "../../lib/portfolio";
 import {
   getEffectiveStatus,
   getTransactionStatusMeta,
@@ -28,7 +34,7 @@ const TRENDING_GRADIENTS = [
 ];
 
 export function Dashboard() {
-  const { currency, exchangeRate, buyRate } = useUIStore();
+  const { currency, exchangeRate, buyRate, sellRate } = useUIStore();
 
   const { data: balances } = useWalletBalances();
   const { data: allAssets } = useMarketAssets();
@@ -38,15 +44,21 @@ export function Dashboard() {
   const effectiveBuyRate =
     buyRate > 0 ? buyRate : exchangeRate > 0 ? exchangeRate : 1600;
 
-  const rawNgnBalance = balances?.NGN || 0;
+  const portfolio = useMemo(
+    () => buildPortfolioSummary(balances, allAssets, sellRate, exchangeRate),
+    [balances, allAssets, sellRate, exchangeRate],
+  );
 
-  const displayBalance =
-    currency === "NGN" ? rawNgnBalance : rawNgnBalance / effectiveBuyRate;
+  const displayTotalBalance =
+    currency === "NGN" ? portfolio.totalNgnValue : portfolio.totalUsdValue;
 
-  const activePortfolio =
-    allAssets?.filter(
-      (asset: Asset) => balances && (balances[asset.id] || 0) > 0,
-    ) || [];
+  const displayCashBalance =
+    currency === "NGN"
+      ? portfolio.ngnBalance
+      : portfolio.ngnBalance / portfolio.effectiveSellRate;
+
+  const displayInvestedBalance =
+    currency === "NGN" ? portfolio.assetsNgnTotal : portfolio.assetsUsdTotal;
 
   return (
     <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-space-lg xl:gap-space-xl">
@@ -56,13 +68,32 @@ export function Dashboard() {
           <div className="flex flex-col space-y-space-md">
             <div className="flex items-center justify-between">
               <span className="font-label-lg text-label-lg text-on-surface-variant">
-                Total Balance
+                Total Portfolio Balance
               </span>
             </div>
             <div className="flex items-baseline gap-1 py-1">
               <h1 className="font-headline-xl text-headline-xl text-on-surface tracking-tight font-extrabold">
-                {formatMoney(displayBalance, currency)}
+                {formatMoney(displayTotalBalance, currency)}
               </h1>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1 pb-1 border-t border-stone-100">
+              <div className="bg-surface-container-low rounded-2xl px-3.5 py-2.5">
+                <span className="text-[11px] font-semibold text-on-surface-variant block">
+                  Available Cash (NGN)
+                </span>
+                <span className="text-sm font-extrabold text-on-surface">
+                  {formatMoney(displayCashBalance, currency)}
+                </span>
+              </div>
+              <div className="bg-surface-container-low rounded-2xl px-3.5 py-2.5">
+                <span className="text-[11px] font-semibold text-on-surface-variant block">
+                  Invested Assets
+                </span>
+                <span className="text-sm font-extrabold text-on-surface">
+                  {formatMoney(displayInvestedBalance, currency)}
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-space-sm sm:gap-space-md pt-space-xs">
@@ -88,45 +119,93 @@ export function Dashboard() {
           </div>
         </div>
 
-        {activePortfolio.length > 0 && (
-          <div className="flex flex-col space-y-space-sm">
-            {activePortfolio.map((asset: Asset) => {
-              const userAssetBalance = balances?.[asset.id] || 0;
-              const yieldPercentage = asset.live_pricing
-                ? (asset.live_pricing.annualized_yield_bps / 100).toFixed(2)
-                : "0.00";
+        {/* Holdings Section: NGN Cash + All Non-NGN Assets */}
+        <div className="flex flex-col space-y-space-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[20px] text-on-surface-variant">
+                account_balance_wallet
+              </span>
+              <h2 className="font-headline-sm text-headline-sm text-on-surface font-bold">
+                Your Holdings
+              </h2>
+            </div>
+            <Link
+              to="/earn"
+              className="px-4 py-1.5 rounded-full bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high font-label-md text-label-md transition-colors cursor-pointer"
+            >
+              Explore Yield
+            </Link>
+          </div>
 
-              return (
-                <div
-                  key={asset.id}
-                  className="bg-surface-container-lowest hover:bg-surface-container-low transition-all duration-200 p-space-md sm:px-space-lg sm:py-space-md rounded-lg shadow-sm flex items-center justify-between group cursor-pointer"
-                >
-                  <div className="flex items-center gap-space-md">
-                    <div className="w-12 h-12 rounded-2xl bg-surface-container flex items-center justify-center shrink-0 text-primary font-bold uppercase">
-                      {(asset.symbol || "A").charAt(0)}
-                    </div>
-                    <div>
-                      <h3 className="font-headline-sm text-headline-sm text-on-surface tracking-tight group-hover:text-primary transition-colors">
-                        {asset.name}
-                      </h3>
-                      <span className="font-body-sm text-body-sm text-on-surface-variant capitalize">
-                        {asset.provider || "Protocol"} Vault
-                      </span>
-                    </div>
+          <div className="bg-surface-container-lowest p-space-md sm:px-space-lg sm:py-space-md rounded-lg shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-space-md min-w-0">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 font-black text-base">
+                ₦
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-headline-sm text-headline-sm text-on-surface tracking-tight truncate">
+                  Nigerian Naira
+                </h3>
+                <span className="font-body-sm text-body-sm text-on-surface-variant block">
+                  NGN • Liquid Cash Balance
+                </span>
+              </div>
+            </div>
+            <div className="text-right shrink-0 pl-3">
+              <span className="font-label-lg text-label-lg text-on-surface font-extrabold block">
+                {formatMoney(displayCashBalance, currency)}
+              </span>
+              <span className="font-body-sm text-body-sm text-on-surface-variant font-mono">
+                {formatTokenQuantity(portfolio.ngnBalance)} NGN
+              </span>
+            </div>
+          </div>
+
+          {portfolio.holdings.map((holding: PortfolioHolding) => {
+            const holdingDisplayValue =
+              currency === "NGN" ? holding.ngnValue : holding.usdValue;
+
+            return (
+              <Link
+                key={holding.id}
+                to="/earn"
+                className="bg-surface-container-lowest hover:bg-surface-container-low transition-all duration-200 p-space-md sm:px-space-lg sm:py-space-md rounded-lg shadow-sm flex items-center justify-between group cursor-pointer"
+              >
+                <div className="flex items-center gap-space-md min-w-0">
+                  <div className="w-12 h-12 rounded-2xl bg-surface-container flex items-center justify-center shrink-0 text-primary font-bold uppercase">
+                    {holding.symbol.charAt(0)}
                   </div>
-                  <div className="text-right">
-                    <span className="font-label-lg text-label-lg text-[#1E7E34] block">
-                      +{yieldPercentage}% APY
-                    </span>
-                    <span className="font-body-md text-body-md text-on-surface-variant font-medium">
-                      {userAssetBalance} {asset.symbol}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-headline-sm text-headline-sm text-on-surface tracking-tight group-hover:text-primary transition-colors truncate">
+                        {holding.name}
+                      </h3>
+                      {holding.apyPercent && (
+                        <span className="text-[10px] font-bold text-[#1E7E34] bg-[#EBF9EB] px-2 py-0.5 rounded-full shrink-0">
+                          +{holding.apyPercent}% APY
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-body-sm text-body-sm text-on-surface-variant capitalize block truncate">
+                      {holding.provider} • {holding.symbol}
                     </span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div className="text-right shrink-0 pl-3">
+                  <span className="font-label-lg text-label-lg text-on-surface font-extrabold block">
+                    {holding.hasValuation
+                      ? formatMoney(holdingDisplayValue, currency)
+                      : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
+                  </span>
+                  <span className="font-body-sm text-body-sm text-on-surface-variant font-mono">
+                    {formatTokenQuantity(holding.tokenBalance)} {holding.symbol}
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
 
         <div className="flex flex-col space-y-space-md pt-space-xs">
           <div className="flex items-center justify-between">
