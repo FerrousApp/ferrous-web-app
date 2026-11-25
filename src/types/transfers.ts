@@ -1,4 +1,6 @@
 // src/types/transfers.ts
+import type { TransactionStatus } from "../lib/transactionStatus";
+
 export interface DvaDetails {
   bank_name: string;
   account_name: string;
@@ -57,13 +59,7 @@ export interface WithdrawalResponse {
   reference: string;
   amount: number;
   currency: string;
-  status: string;
+  status: TransactionStatus | string;
 }
 
-export type GranularStatus =
-  | "PROCESSING_FIAT_RAMP"
-  | "USDC_DELIVERED"
-  | "PENDING_ON_CHAIN"
-  | "PROCESSING_ON_CHAIN_SWAP"
-  | "success"
-  | "failed";
+export type GranularStatus = TransactionStatus;

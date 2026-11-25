@@ -1,5 +1,4 @@
 // src/features/dashboard/Dashboard.tsx
-import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   useWalletBalances,
@@ -8,6 +7,10 @@ import {
   useTransactions,
 } from "../../services/dashboard.service";
 import { useUIStore } from "../../store/uiStore";
+import {
+  getEffectiveStatus,
+  getTransactionStatusMeta,
+} from "../../lib/transactionStatus";
 import type { Asset, Transaction } from "../../types/dashboard";
 
 const formatMoney = (amount: number, currency: "NGN" | "USD") => {
@@ -18,29 +21,6 @@ const formatMoney = (amount: number, currency: "NGN" | "USD") => {
   }).format(amount || 0);
 };
 
-const TX_STATUS_MAP: Record<
-  Transaction["status"],
-  { icon: string; color: string; bg: string }
-> = {
-  success: {
-    icon: "check_circle",
-    color: "text-[#1E7E34]",
-    bg: "bg-[#EBF9EB]",
-  },
-  completed: {
-    icon: "check_circle",
-    color: "text-[#1E7E34]",
-    bg: "bg-[#EBF9EB]",
-  },
-  pending: { icon: "sync", color: "text-tertiary", bg: "bg-tertiary-fixed" },
-  failed: { icon: "cancel", color: "text-error", bg: "bg-error-container" },
-  reversed: {
-    icon: "undo",
-    color: "text-error",
-    bg: "bg-error-container",
-  },
-};
-
 const TRENDING_GRADIENTS = [
   "from-[#8C3A27] via-[#752E1D] to-[#5C2314]",
   "from-[#A0004B] via-[#85003E] to-[#670030]",
@@ -48,32 +28,20 @@ const TRENDING_GRADIENTS = [
 ];
 
 export function Dashboard() {
-  const { currency, setExchangeRate, exchangeRate } = useUIStore();
+  const { currency, exchangeRate, buyRate } = useUIStore();
 
   const { data: balances } = useWalletBalances();
   const { data: allAssets } = useMarketAssets();
   const { data: trendingAssets } = useTrendingAssets();
   const { data: txData } = useTransactions();
 
-  useEffect(() => {
-    const livePricing = allAssets?.[0]?.live_pricing as unknown as
-      | Record<string, unknown>
-      | undefined;
-    const rate = livePricing?.fiat_exchange_rate_with_usd;
+  const effectiveBuyRate =
+    buyRate > 0 ? buyRate : exchangeRate > 0 ? exchangeRate : 1600;
 
-    if (typeof rate === "number") {
-      setExchangeRate(rate);
-    }
-  }, [allAssets, setExchangeRate]);
+  const rawNgnBalance = balances?.NGN || 0;
 
-  const rawNgnBalance =
-    (balances as Record<string, number> | undefined)?.NGN || 0;
-
-  // FIX: Make sure displayBalance actually computes the proper NGN/USD split
   const displayBalance =
-    currency === "NGN"
-      ? rawNgnBalance
-      : rawNgnBalance / (exchangeRate > 0 ? exchangeRate : 1600);
+    currency === "NGN" ? rawNgnBalance : rawNgnBalance / effectiveBuyRate;
 
   const activePortfolio =
     allAssets?.filter(
@@ -179,7 +147,11 @@ export function Dashboard() {
           </div>
           <div className="flex flex-col space-y-space-sm">
             {txData?.transactions?.map((tx: Transaction) => {
-              const status = TX_STATUS_MAP[tx.status] || TX_STATUS_MAP.pending;
+              const effectiveStatus = getEffectiveStatus(tx);
+              const statusMeta = getTransactionStatusMeta(effectiveStatus);
+              const txAmount = Number(tx.amount || 0);
+              const txCurrency: "NGN" | "USD" =
+                tx.currency === "USD" ? "USD" : "NGN";
 
               return (
                 <div
@@ -188,15 +160,17 @@ export function Dashboard() {
                 >
                   <div className="flex items-center gap-space-md">
                     <div
-                      className={`w-10 h-10 rounded-2xl ${status.bg} ${status.color} flex items-center justify-center shrink-0`}
+                      className={`w-10 h-10 rounded-2xl ${statusMeta.bg} ${statusMeta.color} flex items-center justify-center shrink-0`}
                     >
-                      <span className="material-symbols-outlined text-[20px]">
-                        {status.icon}
+                      <span
+                        className={`material-symbols-outlined text-[20px] ${statusMeta.spin ? "animate-spin" : ""}`}
+                      >
+                        {statusMeta.icon}
                       </span>
                     </div>
                     <div className="min-w-0">
                       <span className="font-label-lg text-label-lg text-on-surface block capitalize">
-                        {(tx.type || "Transaction").replace("_", " ")}
+                        {(tx.type || "Transaction").replace(/_/g, " ")}
                       </span>
                       <span className="font-body-sm text-body-sm text-on-surface-variant truncate capitalize">
                         {tx.provider || "System"} •{" "}
@@ -206,15 +180,12 @@ export function Dashboard() {
                   </div>
                   <div className="text-right shrink-0">
                     <span className="font-label-lg text-label-lg text-on-surface">
-                      {formatMoney(
-                        tx.amount || 0,
-                        tx.currency as "NGN" | "USD",
-                      )}
+                      {formatMoney(txAmount, txCurrency)}
                     </span>
                     <span
-                      className={`font-body-sm text-body-sm ${status.color} block capitalize`}
+                      className={`font-body-sm text-body-sm ${statusMeta.color} block`}
                     >
-                      {tx.status}
+                      {statusMeta.label}
                     </span>
                   </div>
                 </div>
@@ -249,6 +220,10 @@ export function Dashboard() {
             const yieldPercentage = asset.live_pricing
               ? (asset.live_pricing.annualized_yield_bps / 100).toFixed(2)
               : "0.00";
+
+            const minDepositNgn =
+              asset.minimum_deposit_ngn ??
+              Math.ceil((asset.minimum_deposit_usd || 0) * effectiveBuyRate);
 
             return (
               <Link
@@ -301,7 +276,9 @@ export function Dashboard() {
                         Min deposit
                       </span>
                       <span className="font-headline-sm text-headline-sm text-white font-bold tracking-tight">
-                        ${(asset.minimum_deposit_usd || 0).toLocaleString()}
+                        {currency === "NGN"
+                          ? `₦${minDepositNgn.toLocaleString()}`
+                          : `$${(asset.minimum_deposit_usd || 0).toLocaleString()}`}
                       </span>
                     </div>
                   </div>

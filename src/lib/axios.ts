@@ -15,7 +15,7 @@ export const apiClient = axios.create({
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value?: unknown) => void;
-  reject: (reason?: unknown) => void; // Fixed: changed any to unknown
+  reject: (reason?: unknown) => void;
 }> = [];
 
 const processQueue = (
@@ -32,7 +32,26 @@ const processQueue = (
   failedQueue = [];
 };
 
-// Request Interceptor
+const parseBackendErrorMessage = (error: AxiosError): string => {
+  const payload = error.response?.data as
+    | (Partial<ErrorResponse> & {
+        message?: string;
+        error?: string | { message?: string };
+      })
+    | undefined;
+
+  if (payload?.error) {
+    if (typeof payload.error === "string") return payload.error;
+    if (typeof payload.error === "object" && payload.error.message) {
+      return payload.error.message;
+    }
+  }
+
+  if (payload?.message) return payload.message;
+
+  return error.message;
+};
+
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const { accessToken } = useAuthStore.getState();
@@ -44,10 +63,8 @@ apiClient.interceptors.request.use(
   (error: unknown) => Promise.reject(error),
 );
 
-// Response Interceptor
 apiClient.interceptors.response.use(
   (response) => {
-    // Safely check for success property without implicit any
     const data = response.data as { success?: boolean };
     if (data && data.success !== undefined) {
       return response.data;
@@ -59,9 +76,7 @@ apiClient.interceptors.response.use(
       _retry?: boolean;
     };
 
-    // Fixed: Cast the backend error strictly to our ErrorResponse type instead of any
-    const backendError = error.response?.data as ErrorResponse;
-    const errorMessage = backendError?.error?.message || error.message;
+    const errorMessage = parseBackendErrorMessage(error);
 
     if (
       error.response?.status === 401 &&
@@ -96,7 +111,6 @@ apiClient.interceptors.response.use(
       }
 
       try {
-        // Explicitly defining the expected response types for the refresh call
         const refreshResponse = await axios.post<{
           success: boolean;
           data: { accessToken: string; refreshToken: string };
@@ -117,7 +131,6 @@ apiClient.interceptors.response.use(
         }
         return apiClient(originalRequest);
       } catch (refreshError: unknown) {
-        // Fixed: Catch as unknown, then cast to AxiosError
         const axiosRefreshError = refreshError as AxiosError;
         processQueue(axiosRefreshError, null);
 

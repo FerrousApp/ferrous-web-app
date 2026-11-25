@@ -1,4 +1,5 @@
 // src/types/dashboard.ts
+import type { TransactionStatus } from "../lib/transactionStatus";
 
 export interface LivePricing {
   cost_in_usd: number;
@@ -6,6 +7,12 @@ export interface LivePricing {
   fiat_currency: string;
   annualized_yield_bps: number;
   last_updated: string;
+}
+
+export interface MarketMeta {
+  global_usd_ngn_rate?: number;
+  global_usd_ngn_buy_rate?: number;
+  global_usd_ngn_sell_rate?: number;
 }
 
 export interface Asset {
@@ -19,6 +26,7 @@ export interface Asset {
   active: boolean;
   decimals: number;
   minimum_deposit_usd: number;
+  minimum_deposit_ngn?: number | null;
   tags: string[];
   live_pricing: LivePricing | null;
 }
@@ -33,12 +41,11 @@ export interface Transaction {
     | "fiat_withdrawal"
     | string;
   provider: string;
-  amount: number;
+  amount: number | string;
   currency: string;
-  // FIX: Added 'reversed' and 'completed' to the allowed status strings
-  status: "success" | "failed" | "pending" | "reversed" | "completed";
+  status: TransactionStatus | string;
   created_at: string;
-  granular_status?: string;
+  granular_status?: TransactionStatus | string;
   metadata?: {
     bank_name?: string;
     account_number?: string;
@@ -60,5 +67,5 @@ export interface TransactionsResponse {
 }
 
 export interface BalancesResponse {
-  balances: Record<string, string>;
+  balances: Record<string, unknown>;
 }

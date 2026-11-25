@@ -1,7 +1,17 @@
 // src/services/dashboard.service.ts
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
-import type { Asset, TransactionsResponse } from "../types/dashboard";
+import { useUIStore } from "../store/uiStore";
+import {
+  getEffectiveStatus,
+  isTransactionActionable,
+  isTransactionInProgress,
+} from "../lib/transactionStatus";
+import type {
+  Asset,
+  MarketMeta,
+  TransactionsResponse,
+} from "../types/dashboard";
 
 const parseBalanceValue = (value: unknown): number => {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -21,6 +31,26 @@ const parseBalanceValue = (value: unknown): number => {
   }
 
   return 0;
+};
+
+const syncMarketMeta = (res: unknown): void => {
+  if (!res || typeof res !== "object") return;
+  const root = res as Record<string, unknown>;
+  const data1 = root.data as Record<string, unknown> | undefined;
+  const meta = (root.meta || data1?.meta) as MarketMeta | undefined;
+
+  if (!meta) return;
+
+  const globalRate = Number(meta.global_usd_ngn_rate);
+  const buyRate = Number(meta.global_usd_ngn_buy_rate);
+  const sellRate = Number(meta.global_usd_ngn_sell_rate);
+
+  useUIStore.getState().setExchangeRates({
+    global:
+      Number.isFinite(globalRate) && globalRate > 0 ? globalRate : undefined,
+    buy: Number.isFinite(buyRate) && buyRate > 0 ? buyRate : undefined,
+    sell: Number.isFinite(sellRate) && sellRate > 0 ? sellRate : undefined,
+  });
 };
 
 const extractBalances = (payload: unknown): Record<string, unknown> | null => {
@@ -86,11 +116,13 @@ const dashboardApi = {
 
   getMarketAssets: async (): Promise<Asset[]> => {
     const res = await apiClient.get<unknown, unknown>("/market/assets");
+    syncMarketMeta(res);
     return extractArray<Asset>(res) || [];
   },
 
   getTrendingAssets: async (): Promise<Asset[]> => {
     const res = await apiClient.get<unknown, unknown>("/utility/trending");
+    syncMarketMeta(res);
     return extractArray<Asset>(res) || [];
   },
 
@@ -138,5 +170,12 @@ export const useTransactions = (limit = 20, offset = 0) =>
   useQuery({
     queryKey: ["transactions", limit, offset],
     queryFn: () => dashboardApi.getTransactions(limit, offset),
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const txs = query.state.data?.transactions ?? [];
+      const hasActive = txs.some((tx) => {
+        const eff = getEffectiveStatus(tx);
+        return isTransactionInProgress(eff) || isTransactionActionable(eff);
+      });
+      return hasActive ? 5000 : 15000;
+    },
   });
