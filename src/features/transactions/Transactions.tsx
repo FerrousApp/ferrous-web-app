@@ -1,39 +1,24 @@
 // src/features/transactions/Transactions.tsx
 import { useState } from "react";
 import { useTransactions } from "../../services/dashboard.service";
+import { useExecuteSwap } from "../../services/earn.service";
 import { useUIStore } from "../../store/uiStore";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
+import {
+  getEffectiveStatus,
+  getTransactionStatusMeta,
+  isTransactionActionable,
+  isTransactionFailed,
+  isTransactionSuccess,
+  type StatusCategory,
+} from "../../lib/transactionStatus";
 import type { Transaction } from "../../types/dashboard";
 
-const STATUS_MAP: Record<
-  string,
-  { label: string; style: string; icon: string }
-> = {
-  success: {
-    label: "Settled",
-    style: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    icon: "check_circle",
-  },
-  completed: {
-    label: "Settled",
-    style: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    icon: "check_circle",
-  },
-  pending: {
-    label: "Processing",
-    style: "bg-amber-50 text-amber-700 border-amber-200",
-    icon: "sync",
-  },
-  failed: {
-    label: "Failed",
-    style: "bg-red-50 text-red-700 border-red-200",
-    icon: "cancel",
-  },
-  reversed: {
-    label: "Reversed",
-    style: "bg-red-50 text-red-700 border-red-200",
-    icon: "undo",
-  },
+const CATEGORY_BADGE_STYLE: Record<StatusCategory, string> = {
+  success: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  pending: "bg-amber-50 text-amber-700 border-amber-200",
+  actionable: "bg-amber-100 text-amber-900 border-amber-300",
+  failed: "bg-red-50 text-red-700 border-red-200",
 };
 
 const TYPE_MAP: Record<string, string> = {
@@ -43,19 +28,31 @@ const TYPE_MAP: Record<string, string> = {
   bond_liquidation: "Vault Liquidation",
 };
 
+type FilterStatus = "all" | StatusCategory;
+
 export function Transactions() {
-  const { currency, exchangeRate } = useUIStore();
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const { currency, exchangeRate, buyRate, sellRate } = useUIStore();
+  const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
+  const [swapError, setSwapError] = useState<string | null>(null);
 
   const { data: txData, isLoading } = useTransactions(50, 0);
+  const executeSwapMutation = useExecuteSwap();
 
-  const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
+  const effectiveBuyRate =
+    buyRate > 0 ? buyRate : exchangeRate > 0 ? exchangeRate : 1600;
+  const effectiveSellRate = sellRate > 0 ? sellRate : effectiveBuyRate;
 
-  // Filter Logic
+  const selectedTx = selectedTxId
+    ? txData?.transactions?.find((tx) => tx.id === selectedTxId) || null
+    : null;
+
   const filteredTransactions = txData?.transactions?.filter((tx) => {
-    const statusMatch = statusFilter === "all" || tx.status === statusFilter;
+    const effectiveStatus = getEffectiveStatus(tx);
+    const statusMeta = getTransactionStatusMeta(effectiveStatus);
+    const statusMatch =
+      statusFilter === "all" || statusMeta.category === statusFilter;
     const typeMatch = typeFilter === "all" || tx.type === typeFilter;
     return statusMatch && typeMatch;
   });
@@ -69,31 +66,18 @@ export function Transactions() {
     }).format(amount || 0);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "success":
-      case "completed":
-        return "text-emerald-700 bg-emerald-50 border-emerald-200";
-      case "failed":
-      case "reversed":
-        return "text-red-700 bg-red-50 border-red-200";
-      default:
-        return "text-amber-700 bg-amber-50 border-amber-200";
-    }
-  };
-
-  // Helper function to extract just the string representation for the UI
   const getPrimaryValue = (tx: Transaction) => {
-    const rawAmount = tx.amount || 0;
+    const rawAmount = Number(tx.amount || 0);
     let displayAmount = rawAmount;
     let displayCurrency = tx.currency || "NGN";
+    const rateForTx =
+      tx.type === "bond_liquidation" ? effectiveSellRate : effectiveBuyRate;
 
-    // Dynamic UI toggling for standard NGN/USD values
     if (tx.currency === "NGN" && currency === "USD") {
-      displayAmount = rawAmount / currentRate;
+      displayAmount = rawAmount / rateForTx;
       displayCurrency = "USD";
     } else if (tx.currency === "USD" && currency === "NGN") {
-      displayAmount = rawAmount * currentRate;
+      displayAmount = rawAmount * rateForTx;
       displayCurrency = "NGN";
     }
 
@@ -130,7 +114,23 @@ export function Transactions() {
     }
   };
 
+  const handleFinalizeSwap = async (txId: string) => {
+    setSwapError(null);
+    try {
+      await executeSwapMutation.mutateAsync(txId);
+    } catch (err: unknown) {
+      setSwapError(
+        err instanceof Error ? err.message : "Failed to execute on-chain swap.",
+      );
+    }
+  };
+
   const renderModalContent = (tx: Transaction) => {
+    const effectiveStatus = getEffectiveStatus(tx);
+    const statusMeta = getTransactionStatusMeta(effectiveStatus);
+    const isSettled = isTransactionSuccess(effectiveStatus);
+    const isFailed = isTransactionFailed(effectiveStatus);
+
     switch (tx.type) {
       case "fiat_deposit": {
         const meta = tx.metadata as { busha_fee?: string } | undefined;
@@ -138,8 +138,8 @@ export function Transactions() {
           <div className="space-y-4 text-sm">
             <div className="flex justify-between border-b border-stone-100 pb-3">
               <span className="text-stone-500 font-medium">Status</span>
-              <span className="font-bold capitalize text-stone-900">
-                {tx.status}
+              <span className="font-bold text-stone-900">
+                {statusMeta.label}
               </span>
             </div>
             <div className="flex justify-between border-b border-stone-100 pb-3">
@@ -199,11 +199,16 @@ export function Transactions() {
               </span>
             </div>
 
-            {(tx.status === "failed" || tx.status === "reversed") && (
-              <div className="p-3 bg-red-50 text-red-700 rounded-xl border border-red-200 text-xs font-bold mt-2">
-                Failure Reason:{" "}
-                {meta?.failure_reason ||
-                  "Transaction declined by upstream provider."}
+            {isFailed && (
+              <div className="p-3 bg-red-50 text-red-700 rounded-xl border border-red-200 text-xs font-bold mt-2 space-y-1">
+                <p>
+                  Failure Reason:{" "}
+                  {meta?.failure_reason ||
+                    "Transaction declined by upstream provider."}
+                </p>
+                <p className="font-medium text-red-600">
+                  Your NGN balance has been automatically refunded.
+                </p>
               </div>
             )}
           </div>
@@ -218,14 +223,32 @@ export function Transactions() {
               txHash?: string;
             }
           | undefined;
+
+        const fiatSettled = [
+          "USDC_DELIVERED",
+          "AWAITING_ON_CHAIN_RETRY",
+          "PENDING_ON_CHAIN",
+          "PROCESSING_ON_CHAIN_SWAP",
+          "failed_usdc_retained",
+          "success",
+          "completed",
+        ].includes(effectiveStatus);
+        const onChainConfirmed = [
+          "PENDING_ON_CHAIN",
+          "PROCESSING_ON_CHAIN_SWAP",
+          "success",
+          "completed",
+        ].includes(effectiveStatus);
+        const needsAction = isTransactionActionable(effectiveStatus);
+
         return (
           <div className="space-y-4 text-sm">
             <div className="flex justify-between border-b border-stone-100 pb-3">
               <span className="text-stone-500 font-medium">Asset Received</span>
               <span className="font-bold text-emerald-600">
-                {tx.status === "success" && meta?.purchased_bond_amount
+                {isSettled && meta?.purchased_bond_amount
                   ? `+${meta.purchased_bond_amount}`
-                  : "Processing..."}
+                  : statusMeta.label}
               </span>
             </div>
             <div className="flex justify-between border-b border-stone-100 pb-3">
@@ -264,26 +287,19 @@ export function Transactions() {
               <div className="space-y-2 text-xs font-bold">
                 <div className="flex justify-between text-stone-900">
                   <span>1. Fiat Ramp</span>
-                  {[
-                    "USDC_DELIVERED",
-                    "PENDING_ON_CHAIN",
-                    "PROCESSING_ON_CHAIN_SWAP",
-                    "success",
-                  ].includes(tx.granular_status || "") ? (
+                  {fiatSettled ? (
                     <span className="text-emerald-600">✓ Settled</span>
+                  ) : isFailed ? (
+                    <span className="text-red-600">{statusMeta.label}</span>
                   ) : (
                     <span className="text-amber-600 animate-pulse">
-                      Processing...
+                      {statusMeta.label}
                     </span>
                   )}
                 </div>
                 <div className="flex justify-between text-stone-900">
                   <span>2. On-Chain Ledger</span>
-                  {[
-                    "PENDING_ON_CHAIN",
-                    "PROCESSING_ON_CHAIN_SWAP",
-                    "success",
-                  ].includes(tx.granular_status || "") ? (
+                  {onChainConfirmed ? (
                     <span className="text-emerald-600">✓ Confirmed</span>
                   ) : (
                     <span className="text-stone-400">Waiting</span>
@@ -291,17 +307,44 @@ export function Transactions() {
                 </div>
                 <div className="flex justify-between text-stone-900">
                   <span>3. Protocol Swap</span>
-                  {tx.granular_status === "success" ? (
+                  {isSettled ? (
                     <span className="text-emerald-600">✓ Swapped</span>
+                  ) : effectiveStatus === "failed_usdc_retained" ? (
+                    <span className="text-red-600">Failed (USDC Retained)</span>
+                  ) : effectiveStatus === "PROCESSING_ON_CHAIN_SWAP" ? (
+                    <span className="text-amber-600 animate-pulse">
+                      Swapping...
+                    </span>
                   ) : (
                     <span className="text-stone-400">Waiting</span>
                   )}
                 </div>
               </div>
 
-              {tx.granular_status === "USDC_DELIVERED" && (
-                <button className="w-full mt-4 py-2 bg-primary text-on-primary-container rounded-xl text-xs font-bold shadow-sm">
-                  Finalize Execution
+              {swapError && (
+                <p className="mt-3 text-xs font-bold text-red-600">
+                  {swapError}
+                </p>
+              )}
+
+              {needsAction && (
+                <button
+                  onClick={() => handleFinalizeSwap(tx.id)}
+                  disabled={executeSwapMutation.isPending}
+                  className="w-full mt-4 py-2.5 bg-primary hover:bg-primary-container text-on-primary-container rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {executeSwapMutation.isPending ? (
+                    <>
+                      <span className="material-symbols-outlined animate-spin text-[16px]">
+                        progress_activity
+                      </span>
+                      <span>Executing...</span>
+                    </>
+                  ) : effectiveStatus === "AWAITING_ON_CHAIN_RETRY" ? (
+                    "Retry Blockchain Execution"
+                  ) : (
+                    "Finalize Execution"
+                  )}
                 </button>
               )}
             </div>
@@ -318,13 +361,13 @@ export function Transactions() {
           | undefined;
         return (
           <div className="space-y-4 text-sm">
-            {tx.status === "completed" && tx.currency === "NGN" && (
+            {isSettled && tx.currency === "NGN" && (
               <div className="flex justify-between border-b border-stone-100 pb-3">
                 <span className="text-stone-500 font-medium">
                   Final NGN Payout
                 </span>
                 <span className="font-extrabold text-emerald-600">
-                  +₦{tx.amount?.toLocaleString()}
+                  +₦{Number(tx.amount || 0).toLocaleString()}
                 </span>
               </div>
             )}
@@ -378,6 +421,11 @@ export function Transactions() {
     }
   };
 
+  const selectedEffectiveStatus = selectedTx
+    ? getEffectiveStatus(selectedTx)
+    : undefined;
+  const selectedStatusMeta = getTransactionStatusMeta(selectedEffectiveStatus);
+
   return (
     <DashboardLayout>
       <div className="max-w-5xl mx-auto w-full space-y-6">
@@ -395,7 +443,9 @@ export function Transactions() {
           <div className="flex flex-wrap items-center gap-2">
             {/* Status Filter Pills */}
             <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 shadow-inner">
-              {["all", "success", "pending", "failed"].map((s) => (
+              {(
+                ["all", "success", "pending", "actionable", "failed"] as const
+              ).map((s) => (
                 <button
                   key={s}
                   onClick={() => setStatusFilter(s)}
@@ -450,12 +500,13 @@ export function Transactions() {
           ) : (
             <div className="divide-y divide-stone-100">
               {filteredTransactions.map((tx: Transaction) => {
-                const safeStatus = tx.status || "pending";
+                const effectiveStatus = getEffectiveStatus(tx);
+                const statusMeta = getTransactionStatusMeta(effectiveStatus);
+                const badgeStyle = CATEGORY_BADGE_STYLE[statusMeta.category];
                 const safeType = tx.type || "unknown_transaction";
 
-                const statusInfo = STATUS_MAP[safeStatus] || STATUS_MAP.pending;
                 const txTypeLabel =
-                  TYPE_MAP[safeType] || safeType.replace("_", " ");
+                  TYPE_MAP[safeType] || safeType.replace(/_/g, " ");
                 const isPositive = [
                   "fiat_deposit",
                   "bond_liquidation",
@@ -464,7 +515,10 @@ export function Transactions() {
                 return (
                   <div
                     key={tx.id}
-                    onClick={() => setSelectedTx(tx)}
+                    onClick={() => {
+                      setSwapError(null);
+                      setSelectedTxId(tx.id);
+                    }}
                     className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-stone-50/50 transition-colors -mx-4 px-4 rounded-xl min-w-0 cursor-pointer group"
                   >
                     <div className="flex items-center space-x-4 min-w-0">
@@ -490,9 +544,9 @@ export function Transactions() {
                             {txTypeLabel}
                           </p>
                           <span
-                            className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md border shrink-0 ${statusInfo.style}`}
+                            className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md border shrink-0 ${badgeStyle}`}
                           >
-                            {statusInfo.label}
+                            {statusMeta.label}
                           </span>
                         </div>
                         <p className="text-[11px] text-stone-500 font-medium mt-0.5 truncate">
@@ -539,11 +593,10 @@ export function Transactions() {
       {selectedTx && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            {/* Modal Header */}
             <div className="p-6 border-b border-stone-100 flex items-start justify-between bg-stone-50">
               <div className="flex items-center gap-3">
                 <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 ${getStatusColor(selectedTx.status)}`}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 ${CATEGORY_BADGE_STYLE[selectedStatusMeta.category]}`}
                 >
                   <span className="material-symbols-outlined text-[20px]">
                     {selectedTx.type.includes("deposit") ||
@@ -559,12 +612,13 @@ export function Transactions() {
                     {getModalHeader(selectedTx)}
                   </h2>
                   <p className="text-xs text-stone-500 font-medium capitalize mt-0.5">
-                    {selectedTx.provider || "System"} • {selectedTx.status}
+                    {selectedTx.provider || "System"} •{" "}
+                    {selectedStatusMeta.label}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setSelectedTx(null)}
+                onClick={() => setSelectedTxId(null)}
                 className="w-8 h-8 rounded-full bg-stone-200 hover:bg-stone-300 text-stone-600 flex items-center justify-center transition-colors cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">
@@ -573,7 +627,6 @@ export function Transactions() {
               </button>
             </div>
 
-            {/* Big Amount Display */}
             <div className="p-6 text-center border-b border-stone-100">
               <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">
                 Transaction Value
@@ -585,13 +638,11 @@ export function Transactions() {
               </h1>
             </div>
 
-            {/* Dynamic Metadata Render */}
             <div className="p-6 bg-white">{renderModalContent(selectedTx)}</div>
 
-            {/* Close Action */}
             <div className="p-4 bg-stone-50 border-t border-stone-100">
               <button
-                onClick={() => setSelectedTx(null)}
+                onClick={() => setSelectedTxId(null)}
                 className="w-full py-3 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-sm rounded-xl transition-colors cursor-pointer"
               >
                 Close Receipt

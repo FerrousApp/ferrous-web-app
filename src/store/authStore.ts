@@ -3,8 +3,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User as BaseUser } from "../types/auth";
 
-// PERMANENT FIX: Explicitly define the optional fields your UI uses.
-// This completely eliminates the ESLint warning and provides perfect type safety!
 export type User = BaseUser & {
   id: string;
   email?: string;
@@ -21,6 +19,8 @@ export type User = BaseUser & {
   dateOfBirth?: string;
   kyc_status?: string;
   is_verified?: boolean;
+  privy_did?: string | null;
+  has_consented_to_terms?: boolean;
 };
 
 interface AuthState {

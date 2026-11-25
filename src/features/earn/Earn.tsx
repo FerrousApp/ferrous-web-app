@@ -5,38 +5,45 @@ import {
   useEarnAssets,
   useExecuteInvestment,
 } from "../../services/earn.service";
-import { useProfile } from "../../services/settings.service"; // FIX: Added to fetch live profile data
+import { useProfile, useOnboardUser } from "../../services/settings.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
-import type { EarnAsset } from "../../types/earn";
+import type { EarnAsset, InvestmentExecutePayload } from "../../types/earn";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
 
 export function Earn() {
   const navigate = useNavigate();
   const { data: assets, isLoading: isAssetsLoading } = useEarnAssets();
-  const { data: userProfile, isLoading: isProfileLoading } = useProfile(); // FIX: Fetching live status
+  const { data: userProfile, isLoading: isProfileLoading } = useProfile();
   const executeInvestmentMutation = useExecuteInvestment();
-  const { currency, exchangeRate } = useUIStore();
+  const onboardMutation = useOnboardUser();
+  const { currency, exchangeRate, buyRate } = useUIStore();
   const { user } = useAuthStore();
 
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [investmentAmount, setInvestmentAmount] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Vault Activation & Terms Dialog State
+  const [showVaultModal, setShowVaultModal] = useState<boolean>(false);
+  const [termsConsentChecked, setTermsConsentChecked] =
+    useState<boolean>(false);
+  const [onboardError, setOnboardError] = useState<string | null>(null);
+  const [pendingInvestment, setPendingInvestment] =
+    useState<InvestmentExecutePayload | null>(null);
+
   const activeAsset: EarnAsset | undefined =
     assets?.find((a) => a.id === selectedAssetId) || assets?.[0];
 
-  // Map both the live backend profile and the fallback static store profile
   const storeProfile = user as unknown as Record<
     string,
-    string | boolean | undefined
+    string | boolean | null | undefined
   > | null;
   const liveProfile = userProfile as unknown as Record<
     string,
-    string | boolean | undefined
+    string | boolean | null | undefined
   > | null;
 
-  // FIX: Checks the LIVE backend profile first to instantly unlock the UI
   const isVerified =
     liveProfile?.busha_status === "verified" ||
     storeProfile?.busha_status === "verified" ||
@@ -45,50 +52,122 @@ export function Earn() {
     liveProfile?.is_verified === true ||
     storeProfile?.is_verified === true;
 
-  const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
+  const hasPrivyDid = Boolean(
+    (typeof liveProfile?.privy_did === "string" &&
+      liveProfile.privy_did.trim()) ||
+    (typeof storeProfile?.privy_did === "string" &&
+      storeProfile.privy_did.trim()),
+  );
+
+  const effectiveBuyRate =
+    buyRate > 0 ? buyRate : exchangeRate > 0 ? exchangeRate : 1600;
+
+  const getMinDepositNgn = (asset: EarnAsset): number =>
+    asset.minimum_deposit_ngn ??
+    Math.ceil((asset.minimum_deposit_usd || 0) * effectiveBuyRate);
+
+  const formatMinDeposit = (asset: EarnAsset): string => {
+    if (currency === "NGN") {
+      return `₦${getMinDepositNgn(asset).toLocaleString()}`;
+    }
+    return `$${(asset.minimum_deposit_usd || 0).toLocaleString()}`;
+  };
 
   const amountNum = parseFloat(investmentAmount);
   const isInputValid = !isNaN(amountNum) && amountNum > 0;
   const isButtonActive = isVerified && isInputValid;
 
+  const openVaultModal = (payload: InvestmentExecutePayload) => {
+    setPendingInvestment(payload);
+    setTermsConsentChecked(false);
+    setOnboardError(null);
+    setShowVaultModal(true);
+  };
+
+  const submitInvestment = async (payload: InvestmentExecutePayload) => {
+    setErrorMessage(null);
+    try {
+      await executeInvestmentMutation.mutateAsync(payload);
+      navigate("/", { replace: true });
+    } catch (err: unknown) {
+      const errorMsg =
+        err instanceof Error ? err.message : "Failed to execute investment.";
+
+      if (errorMsg.toLowerCase().includes("privy did")) {
+        openVaultModal(payload);
+        return;
+      }
+
+      setErrorMessage(errorMsg);
+    }
+  };
+
   const handleSupplyToPool = async () => {
     if (!activeAsset || !isVerified) return;
     setErrorMessage(null);
 
-    try {
-      if (!isInputValid) {
-        setErrorMessage("Please enter a valid investment amount.");
-        return;
-      }
-
-      // Strict Minimum Deposit Validation Check
-      const minDepositUsd = activeAsset.minimum_deposit_usd || 0;
-
-      if (currency === "USD" && amountNum < minDepositUsd) {
-        setErrorMessage(`Minimum deposit is $${minDepositUsd}`);
-        return;
-      }
-
-      if (currency === "NGN" && amountNum < minDepositUsd * currentRate) {
-        setErrorMessage(
-          `Minimum deposit is ₦${(minDepositUsd * currentRate).toLocaleString()}`,
-        );
-        return;
-      }
-
-      const finalAmountInNgn =
-        currency === "USD" ? amountNum * currentRate : amountNum;
-
-      await executeInvestmentMutation.mutateAsync({
-        assetId: activeAsset.id,
-        amountInNgn: finalAmountInNgn,
-      });
-
-      navigate("/", { replace: true });
-    } catch (err: unknown) {
-      const error = err as Error;
-      setErrorMessage(error.message || "Failed to execute investment.");
+    if (!isInputValid) {
+      setErrorMessage("Please enter a valid investment amount.");
+      return;
     }
+
+    const minDepositUsd = activeAsset.minimum_deposit_usd || 0;
+    const minDepositNgn = getMinDepositNgn(activeAsset);
+
+    if (currency === "USD" && amountNum < minDepositUsd) {
+      setErrorMessage(`Minimum deposit is $${minDepositUsd.toLocaleString()}`);
+      return;
+    }
+
+    if (currency === "NGN" && amountNum < minDepositNgn) {
+      setErrorMessage(`Minimum deposit is ₦${minDepositNgn.toLocaleString()}`);
+      return;
+    }
+
+    const finalAmountInNgn =
+      currency === "USD" ? Math.ceil(amountNum * effectiveBuyRate) : amountNum;
+
+    const payload: InvestmentExecutePayload = {
+      assetId: activeAsset.id,
+      amountInNgn: finalAmountInNgn,
+    };
+
+    if (!hasPrivyDid) {
+      openVaultModal(payload);
+      return;
+    }
+
+    await submitInvestment(payload);
+  };
+
+  const handleActivateVault = async () => {
+    if (!termsConsentChecked || onboardMutation.isPending) return;
+    setOnboardError(null);
+
+    try {
+      await onboardMutation.mutateAsync();
+      setShowVaultModal(false);
+
+      const payloadToRun = pendingInvestment;
+      setPendingInvestment(null);
+
+      if (payloadToRun) {
+        await submitInvestment(payloadToRun);
+      }
+    } catch (err: unknown) {
+      const errorMsg =
+        err instanceof Error
+          ? err.message
+          : "Failed to activate investment vault. Please retry.";
+      setOnboardError(errorMsg);
+    }
+  };
+
+  const handleCloseVaultModal = () => {
+    if (onboardMutation.isPending) return;
+    setShowVaultModal(false);
+    setPendingInvestment(null);
+    setOnboardError(null);
   };
 
   if (isAssetsLoading || isProfileLoading) {
@@ -104,7 +183,8 @@ export function Earn() {
   }
 
   const formatMoney = (usdValue: number) => {
-    const finalValue = currency === "NGN" ? usdValue * currentRate : usdValue;
+    const finalValue =
+      currency === "NGN" ? usdValue * effectiveBuyRate : usdValue;
     return new Intl.NumberFormat("en-NG", {
       style: "currency",
       currency,
@@ -114,7 +194,8 @@ export function Earn() {
   };
 
   const formatCompactMoney = (usdValue: number) => {
-    const finalValue = currency === "NGN" ? usdValue * currentRate : usdValue;
+    const finalValue =
+      currency === "NGN" ? usdValue * effectiveBuyRate : usdValue;
     return new Intl.NumberFormat("en-NG", {
       style: "currency",
       currency,
@@ -149,7 +230,10 @@ export function Earn() {
               return (
                 <div
                   key={asset.id}
-                  onClick={() => setSelectedAssetId(asset.id)}
+                  onClick={() => {
+                    setSelectedAssetId(asset.id);
+                    setErrorMessage(null);
+                  }}
                   className={`rounded-3xl p-6 sm:p-7 text-white shadow-lg relative overflow-hidden transition-all duration-300 hover:-translate-y-1 cursor-pointer bg-gradient-to-r from-amber-700 via-amber-800 to-amber-950 border ${isSelected ? "ring-2 ring-primary" : "border-amber-600/30"}`}
                 >
                   <div className="relative z-10 flex flex-col justify-between h-full min-h-[160px]">
@@ -181,7 +265,7 @@ export function Earn() {
                           Min amount
                         </span>
                         <p className="text-xl font-bold tracking-tight text-white">
-                          {formatMoney(asset.minimum_deposit_usd || 0)}
+                          {formatMinDeposit(asset)}
                         </p>
                       </div>
                     </div>
@@ -229,7 +313,6 @@ export function Earn() {
                 </p>
               </div>
 
-              {/* Dynamic USD/NGN Price Toggle */}
               <div className="bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Token Price ({currency})
@@ -237,12 +320,11 @@ export function Earn() {
                 <p className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate text-primary">
                   ~
                   {currency === "NGN"
-                    ? `₦${(Number(activeAsset.live_pricing?.cost_in_usd || 1) * currentRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+                    ? `₦${(Number(activeAsset.live_pricing?.cost_in_usd || 1) * effectiveBuyRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
                     : `$${Number(activeAsset.live_pricing?.cost_in_usd || 1).toFixed(3)}`}
                 </p>
               </div>
 
-              {/* Expanded to col-span-2 to keep the grid perfectly aligned */}
               <div className="col-span-2 bg-white rounded-2xl p-4 border border-amber-300 shadow-sm min-w-0">
                 <span className="text-[11px] font-semibold text-stone-500 block mb-1 truncate">
                   Protocol Fees
@@ -289,8 +371,7 @@ export function Earn() {
                         {activeAsset.name}
                       </h4>
                       <p className="text-[11px] font-medium text-stone-400 truncate">
-                        Min deposit:{" "}
-                        {formatMoney(activeAsset.minimum_deposit_usd || 0)}
+                        Min deposit: {formatMinDeposit(activeAsset)}
                       </p>
                     </div>
                   </div>
@@ -313,9 +394,16 @@ export function Earn() {
                     <input
                       type="number"
                       value={investmentAmount}
-                      onChange={(e) => setInvestmentAmount(e.target.value)}
+                      onChange={(e) => {
+                        setErrorMessage(null);
+                        setInvestmentAmount(e.target.value);
+                      }}
                       className="w-full bg-transparent text-xl font-extrabold text-stone-900 outline-none"
-                      placeholder={currency === "NGN" ? "20000" : "12.50"}
+                      placeholder={
+                        currency === "NGN"
+                          ? String(getMinDepositNgn(activeAsset))
+                          : String(activeAsset.minimum_deposit_usd || 10)
+                      }
                     />
                   </div>
                 </div>
@@ -329,7 +417,9 @@ export function Earn() {
                 <button
                   onClick={handleSupplyToPool}
                   disabled={
-                    !isButtonActive || executeInvestmentMutation.isPending
+                    !isButtonActive ||
+                    executeInvestmentMutation.isPending ||
+                    onboardMutation.isPending
                   }
                   className={`w-full py-3.5 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2
                     ${
@@ -360,6 +450,110 @@ export function Earn() {
           </div>
         )}
       </div>
+
+      {/* ACTIVATE INVESTMENT VAULT & TERMS DIALOG */}
+      {showVaultModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-stone-100 flex items-start justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">
+                    account_balance_wallet
+                  </span>
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-stone-900">
+                    Activate Investment Vault &amp; Terms
+                  </h2>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    One-time secure on-chain vault setup
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCloseVaultModal}
+                disabled={onboardMutation.isPending}
+                className="w-8 h-8 rounded-full bg-stone-200 hover:bg-stone-300 text-stone-600 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  close
+                </span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-stone-600 leading-relaxed">
+                Before routing your first investment, Ferrous will provision
+                your dedicated embedded on-chain vault to custody tokenized
+                yield positions securely in your name.
+              </p>
+
+              <label className="flex items-start gap-3 p-3.5 rounded-2xl bg-stone-50 border border-stone-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={termsConsentChecked}
+                  disabled={onboardMutation.isPending}
+                  onChange={(e) => setTermsConsentChecked(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 text-primary rounded border-stone-400 focus:ring-primary cursor-pointer"
+                />
+                <span className="text-xs text-stone-700 leading-relaxed">
+                  I agree to the{" "}
+                  <span className="font-bold text-stone-900">
+                    Terms of Service
+                  </span>{" "}
+                  and authorize Ferrous to establish my embedded investment
+                  vault and execute on-chain allocations on my behalf.
+                </span>
+              </label>
+
+              {onboardError && (
+                <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl border border-red-200">
+                  {onboardError}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center gap-3">
+              <button
+                onClick={handleCloseVaultModal}
+                disabled={onboardMutation.isPending}
+                className="px-4 py-3 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleActivateVault}
+                disabled={!termsConsentChecked || onboardMutation.isPending}
+                className="flex-1 py-3 bg-primary hover:bg-primary-container text-on-primary-container font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {onboardMutation.isPending ? (
+                  <>
+                    <span className="material-symbols-outlined animate-spin text-[16px]">
+                      progress_activity
+                    </span>
+                    <span>Activating Vault...</span>
+                  </>
+                ) : onboardError ? (
+                  <>
+                    <span className="material-symbols-outlined text-[16px]">
+                      refresh
+                    </span>
+                    <span>Retry Activation</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[16px]">
+                      verified_user
+                    </span>
+                    <span>Agree &amp; Activate Vault</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

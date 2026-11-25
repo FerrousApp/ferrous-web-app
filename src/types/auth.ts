@@ -1,16 +1,16 @@
 // src/types/auth.ts
-
-// src/types/auth.ts
 export interface User {
   id: string;
   email: string;
   role: string;
   account_status: string;
   busha_status: string;
-  name?: string; // Add this
-  firstName?: string; // Add this
-  lastName?: string; // Add this
-  avatar?: string; // Add this
+  privy_did?: string | null;
+  has_consented_to_terms?: boolean;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  avatar?: string;
 }
 
 export interface AuthTokens {
