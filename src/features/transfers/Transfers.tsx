@@ -8,18 +8,35 @@ import {
 } from "../../services/transfers.service";
 import {
   useWalletBalances,
+  useMarketAssets,
   useTransactions,
 } from "../../services/dashboard.service";
 import { useProfile } from "../../services/settings.service";
-import { useExecuteSwap } from "../../services/earn.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
-import type { GranularStatus, DvaDetails } from "../../types/transfers";
+import {
+  buildPortfolioSummary,
+  formatTokenQuantity,
+  type PortfolioHolding,
+} from "../../lib/portfolio";
+import {
+  getEffectiveStatus,
+  getTransactionStatusMeta,
+  isTransactionActionable,
+  isTransactionFailed,
+  isTransactionSuccess,
+} from "../../lib/transactionStatus";
+import type { DvaDetails, SavedBank } from "../../types/transfers";
+
+const formatFiat = (amount: number, currency: "NGN" | "USD") =>
+  currency === "NGN"
+    ? `₦${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function Transfers() {
   const navigate = useNavigate();
-  const { currency, exchangeRate } = useUIStore();
+  const { currency, exchangeRate, sellRate } = useUIStore();
   const { user } = useAuthStore();
 
   const { data: userProfile } = useProfile();
@@ -29,38 +46,41 @@ export function Transfers() {
     isError: dvaError,
   } = useDepositAccount();
   const { data: balances } = useWalletBalances();
+  const { data: marketAssets } = useMarketAssets();
 
   const { data: savedBanksData, isLoading: isBanksLoading } = useSavedBanks();
-
-  // FIX: Memoize the array to prevent exhaustive-deps warnings
-  const savedBanks = useMemo(
+  const savedBanks = useMemo<SavedBank[]>(
     () => (Array.isArray(savedBanksData) ? savedBanksData : []),
     [savedBanksData],
   );
 
   const { data: txData } = useTransactions(10, 0);
   const withdrawalMutation = useWithdrawal();
-  const executeSwapMutation = useExecuteSwap();
 
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // FIX: Derived state instead of useEffect. This prevents cascading renders.
   const effectiveSelectedBankId =
     selectedBankId || (savedBanks.length > 0 ? savedBanks[0].id : "");
 
-  const rawNgnBalance =
-    (balances as Record<string, number> | undefined)?.NGN || 0;
-  const currentRate = exchangeRate > 0 ? exchangeRate : 1600;
-  const displayBalance =
-    currency === "NGN" ? rawNgnBalance : rawNgnBalance / currentRate;
+  const portfolio = useMemo(
+    () => buildPortfolioSummary(balances, marketAssets, sellRate, exchangeRate),
+    [balances, marketAssets, sellRate, exchangeRate],
+  );
+
+  const rawNgnBalance = portfolio.ngnBalance;
+  const displayWalletTotal =
+    currency === "NGN" ? portfolio.totalNgnValue : portfolio.totalUsdValue;
+  const displayNgnCash =
+    currency === "NGN"
+      ? portfolio.ngnBalance
+      : portfolio.ngnBalance / portfolio.effectiveSellRate;
 
   const latestTx = txData?.transactions?.[0];
-  const granularStatus = latestTx?.granular_status as
-    | GranularStatus
-    | undefined;
+  const effectiveStatus = getEffectiveStatus(latestTx);
+  const latestStatusMeta = getTransactionStatusMeta(effectiveStatus);
   const txType = latestTx?.type;
 
   const storeProfile = user as unknown as Record<
@@ -126,17 +146,30 @@ export function Transfers() {
       );
     }
 
+    const settled = isTransactionSuccess(effectiveStatus);
+    const failed = isTransactionFailed(effectiveStatus);
+
     if (txType === "fiat_deposit") {
-      const isSettled =
-        granularStatus === "success" || latestTx.status === "success";
       return (
         <div className="space-y-2.5">
           <div
-            className={`p-3.5 rounded-2xl border flex items-center justify-between ${isSettled ? "bg-stone-50 border-stone-200/80" : "bg-amber-50/40 border-amber-200/80"}`}
+            className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+              settled
+                ? "bg-stone-50 border-stone-200/80"
+                : failed
+                  ? "bg-red-50/50 border-red-200/80"
+                  : "bg-amber-50/40 border-amber-200/80"
+            }`}
           >
             <div className="flex items-center space-x-3">
               <span
-                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${isSettled ? "bg-stone-200 text-stone-700" : "bg-amber-400 text-stone-950 animate-pulse"}`}
+                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${
+                  settled
+                    ? "bg-stone-200 text-stone-700"
+                    : failed
+                      ? "bg-red-200 text-red-800"
+                      : "bg-amber-400 text-stone-950 animate-pulse"
+                }`}
               >
                 1
               </span>
@@ -146,13 +179,17 @@ export function Transfers() {
                 </h4>
               </div>
             </div>
-            {isSettled ? (
+            {settled ? (
               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                 ✓ Settled
               </span>
+            ) : failed ? (
+              <span className="text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
+                {latestStatusMeta.label}
+              </span>
             ) : (
               <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
-                Processing
+                {latestStatusMeta.label}
               </span>
             )}
           </div>
@@ -160,9 +197,10 @@ export function Transfers() {
       );
     }
 
-    if (txType === "fiat_withdrawal") {
-      const isSettled =
-        granularStatus === "success" || latestTx.status === "success";
+    if (txType === "fiat_withdrawal" || txType === "bond_liquidation") {
+      const isLiquidation = txType === "bond_liquidation";
+      const payoutStepLabel = isLiquidation ? "Fiat Payout" : "Bank Payout";
+
       return (
         <div className="space-y-2.5">
           <div className="p-3.5 rounded-2xl border bg-stone-50 border-stone-200/80 flex items-center justify-between">
@@ -172,7 +210,9 @@ export function Transfers() {
               </span>
               <div>
                 <h4 className="text-xs font-bold text-stone-900">
-                  Withdrawal Initiated
+                  {isLiquidation
+                    ? "Liquidation Initiated"
+                    : "Withdrawal Initiated"}
                 </h4>
               </div>
             </div>
@@ -182,17 +222,29 @@ export function Transfers() {
           </div>
 
           <div
-            className={`p-3.5 rounded-2xl border flex items-center justify-between ${isSettled ? "bg-stone-50 border-stone-200/80" : "bg-amber-50/40 border-amber-200/80"}`}
+            className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+              settled
+                ? "bg-stone-50 border-stone-200/80"
+                : failed
+                  ? "bg-red-50/50 border-red-200/80"
+                  : "bg-amber-50/40 border-amber-200/80"
+            }`}
           >
             <div className="flex items-center space-x-3">
               <span
-                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${isSettled ? "bg-stone-200 text-stone-700" : "bg-amber-400 text-stone-950 animate-pulse"}`}
+                className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${
+                  settled
+                    ? "bg-stone-200 text-stone-700"
+                    : failed
+                      ? "bg-red-200 text-red-800"
+                      : "bg-amber-400 text-stone-950 animate-pulse"
+                }`}
               >
                 2
               </span>
               <div>
                 <h4 className="text-xs font-bold text-stone-900">
-                  Bank Payout
+                  {payoutStepLabel}
                 </h4>
                 {latestTx.metadata?.bank_name && (
                   <span className="text-[10px] text-stone-500 font-medium block mt-0.5">
@@ -200,15 +252,24 @@ export function Transfers() {
                     {latestTx.metadata.account_number}
                   </span>
                 )}
+                {failed && txType === "fiat_withdrawal" && (
+                  <span className="text-[10px] text-red-600 font-semibold block mt-0.5">
+                    NGN balance automatically refunded
+                  </span>
+                )}
               </div>
             </div>
-            {isSettled ? (
+            {settled ? (
               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                 ✓ Settled
               </span>
+            ) : failed ? (
+              <span className="text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
+                {latestStatusMeta.label}
+              </span>
             ) : (
               <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
-                Processing
+                {latestStatusMeta.label}
               </span>
             )}
           </div>
@@ -218,44 +279,75 @@ export function Transfers() {
 
     const step1Active = [
       "USDC_DELIVERED",
+      "AWAITING_ON_CHAIN_RETRY",
       "PENDING_ON_CHAIN",
       "PROCESSING_ON_CHAIN_SWAP",
+      "failed_usdc_retained",
       "success",
-    ].includes(granularStatus || "");
+      "completed",
+    ].includes(effectiveStatus);
     const step2Active = [
       "PENDING_ON_CHAIN",
       "PROCESSING_ON_CHAIN_SWAP",
       "success",
-    ].includes(granularStatus || "");
-    const step3Active = ["PROCESSING_ON_CHAIN_SWAP", "success"].includes(
-      granularStatus || "",
-    );
-    const step4Active = granularStatus === "success";
-
-    const needsManualExecution = granularStatus === "USDC_DELIVERED";
+      "completed",
+    ].includes(effectiveStatus);
+    const step3Active = [
+      "PROCESSING_ON_CHAIN_SWAP",
+      "success",
+      "completed",
+    ].includes(effectiveStatus);
+    const step4Active = settled;
+    const isActionable = isTransactionActionable(effectiveStatus);
 
     return (
       <div className="space-y-2.5">
         <div
-          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step1Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+            step1Active
+              ? "bg-stone-50 border-stone-200/80"
+              : failed
+                ? "bg-red-50/40 border-red-200/80"
+                : "bg-amber-50/40 border-amber-200/80"
+          }`}
         >
           <div className="flex items-center space-x-3">
-            <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
+            <span
+              className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${
+                step1Active
+                  ? "bg-stone-200 text-stone-700"
+                  : failed
+                    ? "bg-red-200 text-red-800"
+                    : "bg-amber-400 text-stone-950 animate-pulse"
+              }`}
+            >
               1
             </span>
             <div>
               <h4 className="text-xs font-bold text-stone-900">Fiat Ramp</h4>
             </div>
           </div>
-          {step1Active && (
+          {step1Active ? (
             <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
               ✓ Settled
+            </span>
+          ) : failed ? (
+            <span className="text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
+              {latestStatusMeta.label}
+            </span>
+          ) : (
+            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+              {latestStatusMeta.label}
             </span>
           )}
         </div>
 
         <div
-          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step2Active ? "bg-stone-50 border-stone-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+            step2Active
+              ? "bg-stone-50 border-stone-200/80"
+              : "bg-transparent border-dashed border-stone-200 opacity-50"
+          }`}
         >
           <div className="flex items-center space-x-3">
             <span className="w-6 h-6 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center">
@@ -275,11 +367,23 @@ export function Transfers() {
         </div>
 
         <div
-          className={`p-3.5 rounded-2xl border flex items-center justify-between ${step3Active ? "bg-amber-50/40 border-amber-200/80" : "bg-transparent border-dashed border-stone-200 opacity-50"}`}
+          className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+            step3Active
+              ? "bg-amber-50/40 border-amber-200/80"
+              : effectiveStatus === "failed_usdc_retained"
+                ? "bg-red-50/50 border-red-200/80"
+                : "bg-transparent border-dashed border-stone-200 opacity-50"
+          }`}
         >
           <div className="flex items-center space-x-3">
             <span
-              className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${step3Active && !step4Active ? "bg-amber-400 text-stone-950 animate-pulse" : "bg-stone-200 text-stone-700"}`}
+              className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center ${
+                step3Active && !step4Active
+                  ? "bg-amber-400 text-stone-950 animate-pulse"
+                  : effectiveStatus === "failed_usdc_retained"
+                    ? "bg-red-200 text-red-800"
+                    : "bg-stone-200 text-stone-700"
+              }`}
             >
               3
             </span>
@@ -299,32 +403,23 @@ export function Transfers() {
               ✓ Swapped
             </span>
           )}
+          {effectiveStatus === "failed_usdc_retained" && (
+            <span className="text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
+              USDC Retained
+            </span>
+          )}
         </div>
 
-        {needsManualExecution && (
-          <div className="pt-2">
-            <button
-              onClick={() => executeSwapMutation.mutate(latestTx.id)}
-              disabled={executeSwapMutation.isPending}
-              className="w-full py-3.5 bg-primary hover:bg-primary-container text-on-primary-container font-extrabold text-xs tracking-wide rounded-xl shadow-sm transition active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-            >
-              {executeSwapMutation.isPending ? (
-                <>
-                  <span className="material-symbols-outlined animate-spin text-[16px]">
-                    progress_activity
-                  </span>
-                  Executing Smart Contract...
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-[16px]">
-                    fingerprint
-                  </span>
-                  Finalize Blockchain Execution
-                </>
-              )}
-            </button>
-          </div>
+        {isActionable && (
+          <button
+            onClick={() => navigate("/transactions")}
+            className="w-full py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            <span>Open in Transactions</span>
+            <span className="material-symbols-outlined text-[15px]">
+              arrow_forward
+            </span>
+          </button>
         )}
       </div>
     );
@@ -338,7 +433,7 @@ export function Transfers() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-base font-extrabold text-on-surface tracking-tight">
-                Deposit & Top Up
+                Deposit &amp; Top Up
               </h2>
               <p className="text-xs text-on-surface-variant">
                 Instant fiat bank rails
@@ -462,7 +557,7 @@ export function Transfers() {
           </div>
         </section>
 
-        {/* COLUMN 2: Withdrawal Hub & Balances */}
+        {/* COLUMN 2: Withdrawal Hub & Multi-Asset Ferrous Wallet */}
         <section className="space-y-5">
           <div className="flex items-center justify-between">
             <div>
@@ -470,7 +565,7 @@ export function Transfers() {
                 Withdrawal Hub
               </h2>
               <p className="text-xs text-stone-500">
-                Liquidity reserves & balances
+                Liquidity reserves &amp; balances
               </p>
             </div>
           </div>
@@ -479,17 +574,62 @@ export function Transfers() {
             <div className="absolute -right-2 -bottom-4 font-black text-6xl text-stone-800/40 select-none pointer-events-none tracking-tighter">
               FERROUS
             </div>
-            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-stone-400">
-                  Ferrous Wallet
-                </span>
+            <div className="relative z-10 space-y-4">
+              <div>
+                <div className="flex justify-between items-start mb-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-stone-400">
+                    Ferrous Wallet
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300/90 bg-white/10 px-2 py-0.5 rounded-full">
+                    {portfolio.holdings.length + 1}{" "}
+                    {portfolio.holdings.length === 0 ? "Asset" : "Assets"}
+                  </span>
+                </div>
+                <p className="text-2xl font-extrabold tracking-tight text-white">
+                  {formatFiat(displayWalletTotal, currency)}
+                </p>
               </div>
-              <p className="text-2xl font-extrabold tracking-tight text-white mb-4">
-                {currency === "NGN"
-                  ? `₦${displayBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                  : `$${displayBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-              </p>
+
+              <div className="border-t border-white/10 pt-3 space-y-2">
+                <div className="flex items-center justify-between text-xs bg-white/5 rounded-xl px-3 py-2 border border-white/5">
+                  <div className="min-w-0">
+                    <p className="font-bold text-white">NGN Cash</p>
+                    <p className="text-[10px] text-stone-400 font-mono">
+                      {formatTokenQuantity(portfolio.ngnBalance)} NGN
+                    </p>
+                  </div>
+                  <span className="font-extrabold text-white shrink-0 pl-2">
+                    {formatFiat(displayNgnCash, currency)}
+                  </span>
+                </div>
+
+                {portfolio.holdings.map((holding: PortfolioHolding) => {
+                  const holdingFiat =
+                    currency === "NGN" ? holding.ngnValue : holding.usdValue;
+
+                  return (
+                    <div
+                      key={holding.id}
+                      className="flex items-center justify-between text-xs bg-white/5 rounded-xl px-3 py-2 border border-white/5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-white truncate">
+                          {holding.name}
+                        </p>
+                        <p className="text-[10px] text-stone-400 font-mono">
+                          {formatTokenQuantity(holding.tokenBalance)}{" "}
+                          {holding.symbol}
+                        </p>
+                      </div>
+                      <span className="font-extrabold text-amber-200 shrink-0 pl-2">
+                        {holding.hasValuation
+                          ? formatFiat(holdingFiat, currency)
+                          : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -513,7 +653,6 @@ export function Transfers() {
             <div
               className={`bg-surface-container-lowest rounded-3xl p-5 border-2 border-primary/40 shadow-sm space-y-4 transition-all duration-300 ${!isVerified ? "opacity-50 pointer-events-none select-none" : ""}`}
             >
-              {/* Target Bank Dropdown */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <p className="text-xs font-bold text-stone-600">
@@ -536,7 +675,7 @@ export function Transfers() {
                     onChange={(e) => setSelectedBankId(e.target.value)}
                     className="w-full bg-stone-50 rounded-2xl border border-stone-200 p-3 text-sm font-bold text-stone-900 outline-none focus:border-primary cursor-pointer"
                   >
-                    {savedBanks.map((bank) => (
+                    {savedBanks.map((bank: SavedBank) => (
                       <option key={bank.id} value={bank.id}>
                         {bank.bank_name} • {bank.account_number}{" "}
                         {bank.alias ? `(${bank.alias})` : ""}
@@ -633,15 +772,20 @@ export function Transfers() {
                 Processing Pipeline
               </h2>
               <p className="text-xs text-stone-500">
-                Activity status & execution
+                Activity status &amp; execution
               </p>
             </div>
-            {granularStatus === "success" && (
+            {latestTx && isTransactionSuccess(effectiveStatus) && (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-extrabold bg-primary text-on-primary-container shadow-sm">
                 Complete{" "}
                 <span className="material-symbols-outlined text-[14px] ml-1">
                   check
                 </span>
+              </span>
+            )}
+            {latestTx && isTransactionFailed(effectiveStatus) && (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-extrabold bg-red-100 text-red-700 shadow-sm">
+                {latestStatusMeta.label}
               </span>
             )}
           </div>
@@ -652,11 +796,12 @@ export function Transfers() {
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-stone-50 border border-stone-100">
                   <div className="flex items-center space-x-3">
                     <span className="font-extrabold text-xs text-stone-900 capitalize">
-                      {(txType || "Transaction").replace("_", " ")}
+                      {(txType || "Transaction").replace(/_/g, " ")}
                     </span>
                   </div>
                   <span className="font-extrabold font-mono text-base text-stone-900">
-                    {latestTx.amount?.toLocaleString()} {latestTx.currency}
+                    {Number(latestTx.amount || 0).toLocaleString()}{" "}
+                    {latestTx.currency}
                   </span>
                 </div>
 

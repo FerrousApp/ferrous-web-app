@@ -109,6 +109,26 @@ const extractTransactions = (payload: unknown): TransactionsResponse | null => {
   return null;
 };
 
+export const fetchTransactions = async (
+  limit = 20,
+  offset = 0,
+): Promise<TransactionsResponse> => {
+  const res = await apiClient.get<unknown, unknown>(
+    `/transactions/?limit=${limit}&offset=${offset}`,
+  );
+
+  const extractedData = extractTransactions(res);
+
+  if (extractedData) {
+    return extractedData;
+  }
+
+  return {
+    transactions: [],
+    pagination: { total: 0, limit, offset, has_more: false },
+  };
+};
+
 const dashboardApi = {
   getBalances: async (): Promise<Record<string, number>> => {
     const res = await apiClient.get<unknown, unknown>("/wallet/balances");
@@ -138,25 +158,7 @@ const dashboardApi = {
     return extractArray<Asset>(res) || [];
   },
 
-  getTransactions: async (
-    limit = 20,
-    offset = 0,
-  ): Promise<TransactionsResponse> => {
-    const res = await apiClient.get<unknown, unknown>(
-      `/transactions/?limit=${limit}&offset=${offset}`,
-    );
-
-    const extractedData = extractTransactions(res);
-
-    if (extractedData) {
-      return extractedData;
-    }
-
-    return {
-      transactions: [],
-      pagination: { total: 0, limit, offset, has_more: false },
-    };
-  },
+  getTransactions: fetchTransactions,
 };
 
 export const useWalletBalances = () =>

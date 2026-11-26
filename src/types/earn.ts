@@ -29,13 +29,18 @@ export interface InvestmentExecutePayload {
 }
 
 export interface InvestmentExecuteResponse {
-  status: string;
-  message: string;
-  data: {
-    transaction: {
-      id: string;
-      reference: string;
-      status: string;
-    };
+  status?: string;
+  message?: string;
+  transaction: {
+    id: string;
+    reference?: string;
+    status?: string;
   };
+}
+
+export interface ExecuteSwapResponse {
+  status: string;
+  txHash: string;
+  bondOutputTokens: string;
+  message?: string;
 }

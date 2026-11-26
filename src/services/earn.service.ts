@@ -6,41 +6,42 @@ import { useAuthStore } from "../store/authStore";
 import type { MarketMeta } from "../types/dashboard";
 import type {
   EarnAsset,
+  ExecuteSwapResponse,
   InvestmentQuotePayload,
   InvestmentQuoteResponse,
   InvestmentExecutePayload,
   InvestmentExecuteResponse,
 } from "../types/earn";
 
+const unwrapAxiosBody = (res: unknown): Record<string, unknown> => {
+  if (!res || typeof res !== "object") return {};
+  const record = res as Record<string, unknown>;
+
+  if (
+    "data" in record &&
+    "headers" in record &&
+    "config" in record &&
+    record.data &&
+    typeof record.data === "object"
+  ) {
+    return record.data as Record<string, unknown>;
+  }
+
+  return record;
+};
+
 const unwrapPayload = <T>(res: unknown): T => {
-  let current = res;
-
-  if (
-    current &&
-    typeof current === "object" &&
-    "data" in current &&
-    "headers" in current &&
-    "config" in current
-  ) {
-    current = (current as { data: unknown }).data;
+  const body = unwrapAxiosBody(res);
+  if ("data" in body && body.data !== undefined) {
+    return body.data as T;
   }
-
-  if (
-    current &&
-    typeof current === "object" &&
-    "data" in current &&
-    (current as { data: unknown }).data !== undefined
-  ) {
-    return (current as { data: T }).data;
-  }
-
-  return current as T;
+  return body as T;
 };
 
 const earnApi = {
   getEarnAssets: async (): Promise<EarnAsset[]> => {
     const res = await apiClient.get<unknown, unknown>("/market/assets");
-    const root = res as Record<string, unknown>;
+    const root = unwrapAxiosBody(res);
     const data1 = root?.data as Record<string, unknown> | undefined;
 
     const meta = (root?.meta || data1?.meta) as MarketMeta | undefined;
@@ -82,7 +83,7 @@ const earnApi = {
   ): Promise<InvestmentExecuteResponse> => {
     const idempotencyKey = crypto.randomUUID();
 
-    const res = await apiClient.post<unknown, InvestmentExecuteResponse>(
+    const res = await apiClient.post<unknown, unknown>(
       "/investments/execute",
       {
         ...payload,
@@ -91,13 +92,37 @@ const earnApi = {
       {
         headers: {
           "x-idempotency-key": idempotencyKey,
+          "Content-Type": "application/json",
         },
       },
     );
-    return res;
+
+    const body = unwrapAxiosBody(res);
+    const inner = (body.data as Record<string, unknown> | undefined) ?? body;
+    const tx = (inner.transaction ?? body.transaction) as
+      | { id?: string; reference?: string; status?: string }
+      | undefined;
+
+    if (!tx?.id) {
+      throw new Error(
+        "Investment initiated, but no transaction ID was returned.",
+      );
+    }
+
+    return {
+      status: typeof body.status === "string" ? body.status : undefined,
+      message: typeof body.message === "string" ? body.message : undefined,
+      transaction: {
+        id: tx.id,
+        reference: tx.reference,
+        status: tx.status,
+      },
+    };
   },
 
-  executeSwapFinalization: async (transactionId: string): Promise<void> => {
+  executeSwapFinalization: async (
+    transactionId: string,
+  ): Promise<ExecuteSwapResponse> => {
     const token = useAuthStore.getState().accessToken;
     if (!token) {
       throw new Error(
@@ -105,15 +130,35 @@ const earnApi = {
       );
     }
 
-    await apiClient.post(
+    const res = await apiClient.post<unknown, unknown>(
       "/investments/execute-swap",
       { transactionId },
       {
         headers: {
           Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
       },
     );
+
+    const body = unwrapAxiosBody(res);
+    const inner = (body.data as Record<string, unknown> | undefined) ?? body;
+
+    return {
+      status:
+        (typeof inner.status === "string" && inner.status) ||
+        (typeof body.status === "string" && body.status) ||
+        "SUCCESS",
+      txHash: typeof inner.txHash === "string" ? inner.txHash : "",
+      bondOutputTokens:
+        inner.bondOutputTokens !== undefined
+          ? String(inner.bondOutputTokens)
+          : "",
+      message:
+        typeof body.message === "string"
+          ? body.message
+          : "Bond asset purchased and secured in your wallet.",
+    };
   },
 };
 

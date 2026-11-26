@@ -13,6 +13,7 @@ import {
   type StatusCategory,
 } from "../../lib/transactionStatus";
 import type { Transaction } from "../../types/dashboard";
+import type { ExecuteSwapResponse } from "../../types/earn";
 
 const CATEGORY_BADGE_STYLE: Record<StatusCategory, string> = {
   success: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -36,6 +37,8 @@ export function Transactions() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
   const [swapError, setSwapError] = useState<string | null>(null);
+  const [swapSuccessResult, setSwapSuccessResult] =
+    useState<ExecuteSwapResponse | null>(null);
 
   const { data: txData, isLoading } = useTransactions(50, 0);
   const executeSwapMutation = useExecuteSwap();
@@ -116,8 +119,10 @@ export function Transactions() {
 
   const handleFinalizeSwap = async (txId: string) => {
     setSwapError(null);
+    setSwapSuccessResult(null);
     try {
-      await executeSwapMutation.mutateAsync(txId);
+      const result = await executeSwapMutation.mutateAsync(txId);
+      setSwapSuccessResult(result);
     } catch (err: unknown) {
       setSwapError(
         err instanceof Error ? err.message : "Failed to execute on-chain swap.",
@@ -224,31 +229,56 @@ export function Transactions() {
             }
           | undefined;
 
-        const fiatSettled = [
-          "USDC_DELIVERED",
-          "AWAITING_ON_CHAIN_RETRY",
-          "PENDING_ON_CHAIN",
-          "PROCESSING_ON_CHAIN_SWAP",
-          "failed_usdc_retained",
-          "success",
-          "completed",
-        ].includes(effectiveStatus);
-        const onChainConfirmed = [
-          "PENDING_ON_CHAIN",
-          "PROCESSING_ON_CHAIN_SWAP",
-          "success",
-          "completed",
-        ].includes(effectiveStatus);
-        const needsAction = isTransactionActionable(effectiveStatus);
+        const displayTxHash = swapSuccessResult?.txHash || meta?.txHash;
+        const displayBondAmount =
+          swapSuccessResult?.bondOutputTokens || meta?.purchased_bond_amount;
+        const resolvedSettled = isSettled || Boolean(swapSuccessResult);
+
+        const assetReceivedLabel =
+          resolvedSettled && displayBondAmount
+            ? `+${displayBondAmount}`
+            : effectiveStatus === "USDC_DELIVERED"
+              ? "USDC Ready — Swap Pending"
+              : effectiveStatus === "AWAITING_ON_CHAIN_RETRY"
+                ? "Retry Swap"
+                : statusMeta.label;
+
+        const fiatSettled =
+          resolvedSettled ||
+          [
+            "USDC_DELIVERED",
+            "AWAITING_ON_CHAIN_RETRY",
+            "PENDING_ON_CHAIN",
+            "PROCESSING_ON_CHAIN_SWAP",
+            "failed_usdc_retained",
+            "success",
+            "completed",
+          ].includes(effectiveStatus);
+        const onChainConfirmed =
+          resolvedSettled ||
+          [
+            "PENDING_ON_CHAIN",
+            "PROCESSING_ON_CHAIN_SWAP",
+            "success",
+            "completed",
+          ].includes(effectiveStatus);
+        const needsAction =
+          !swapSuccessResult && isTransactionActionable(effectiveStatus);
 
         return (
           <div className="space-y-4 text-sm">
             <div className="flex justify-between border-b border-stone-100 pb-3">
               <span className="text-stone-500 font-medium">Asset Received</span>
-              <span className="font-bold text-emerald-600">
-                {isSettled && meta?.purchased_bond_amount
-                  ? `+${meta.purchased_bond_amount}`
-                  : statusMeta.label}
+              <span
+                className={`font-bold ${
+                  resolvedSettled
+                    ? "text-emerald-600"
+                    : needsAction
+                      ? "text-amber-700"
+                      : "text-stone-700"
+                }`}
+              >
+                {assetReceivedLabel}
               </span>
             </div>
             <div className="flex justify-between border-b border-stone-100 pb-3">
@@ -261,14 +291,14 @@ export function Transactions() {
               <span className="text-stone-500 font-medium">
                 Blockchain Proof
               </span>
-              {meta?.txHash ? (
+              {displayTxHash ? (
                 <a
-                  href={`https://solscan.io/tx/${meta.txHash}`}
+                  href={`https://solscan.io/tx/${displayTxHash}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-mono text-xs text-primary bg-primary-container/20 px-2 py-1 rounded hover:underline flex items-center gap-1"
                 >
-                  {meta.txHash.substring(0, 12)}...
+                  {displayTxHash.substring(0, 12)}...
                   <span className="material-symbols-outlined text-[12px]">
                     open_in_new
                   </span>
@@ -307,7 +337,7 @@ export function Transactions() {
                 </div>
                 <div className="flex justify-between text-stone-900">
                   <span>3. Protocol Swap</span>
-                  {isSettled ? (
+                  {resolvedSettled ? (
                     <span className="text-emerald-600">✓ Swapped</span>
                   ) : effectiveStatus === "failed_usdc_retained" ? (
                     <span className="text-red-600">Failed (USDC Retained)</span>
@@ -321,29 +351,37 @@ export function Transactions() {
                 </div>
               </div>
 
+              {swapSuccessResult && (
+                <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-700">
+                  {swapSuccessResult.message ||
+                    "Bond asset purchased and secured in your wallet."}
+                </div>
+              )}
+
               {swapError && (
                 <p className="mt-3 text-xs font-bold text-red-600">
                   {swapError}
                 </p>
               )}
 
+              {/* Fallback-Only Manual Finalization Button */}
               {needsAction && (
                 <button
                   onClick={() => handleFinalizeSwap(tx.id)}
                   disabled={executeSwapMutation.isPending}
-                  className="w-full mt-4 py-2.5 bg-primary hover:bg-primary-container text-on-primary-container rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  className="w-full mt-4 py-2.5 bg-primary hover:bg-primary-container text-[#FFFFFF] rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                 >
                   {executeSwapMutation.isPending ? (
                     <>
-                      <span className="material-symbols-outlined animate-spin text-[16px]">
+                      <span className="material-symbols-outlined animate-spin text-[16px] text-[#FFFFFF]">
                         progress_activity
                       </span>
-                      <span>Executing...</span>
+                      <span className="text-[#FFFFFF]">Executing...</span>
                     </>
                   ) : effectiveStatus === "AWAITING_ON_CHAIN_RETRY" ? (
-                    "Retry Blockchain Execution"
+                    <span className="text-[#FFFFFF]">Retry Swap</span>
                   ) : (
-                    "Finalize Execution"
+                    <span className="text-[#FFFFFF]">Finalize Execution</span>
                   )}
                 </button>
               )}
@@ -441,7 +479,6 @@ export function Transactions() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Status Filter Pills */}
             <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 shadow-inner">
               {(
                 ["all", "success", "pending", "actionable", "failed"] as const
@@ -460,7 +497,6 @@ export function Transactions() {
               ))}
             </div>
 
-            {/* Type Filter Select */}
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
@@ -517,6 +553,7 @@ export function Transactions() {
                     key={tx.id}
                     onClick={() => {
                       setSwapError(null);
+                      setSwapSuccessResult(null);
                       setSelectedTxId(tx.id);
                     }}
                     className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-stone-50/50 transition-colors -mx-4 px-4 rounded-xl min-w-0 cursor-pointer group"
