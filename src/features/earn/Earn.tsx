@@ -1,16 +1,22 @@
 // src/features/earn/Earn.tsx
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useEarnAssets,
   useExecuteInvestment,
   useExecuteSwap,
+  useLiquidationQuote,
+  useExecuteLiquidation,
 } from "../../services/earn.service";
-import { fetchTransactions } from "../../services/dashboard.service";
+import {
+  fetchTransactions,
+  useWalletBalances,
+} from "../../services/dashboard.service";
 import { useProfile, useOnboardUser } from "../../services/settings.service";
 import { useUIStore } from "../../store/uiStore";
 import { useAuthStore } from "../../store/authStore";
+import { formatTokenQuantity } from "../../lib/portfolio";
 import {
   getEffectiveStatus,
   isTransactionFailed,
@@ -22,6 +28,13 @@ import type {
   InvestmentExecutePayload,
 } from "../../types/earn";
 import { DashboardLayout } from "../../layouts/DashboardLayout";
+
+type TradeMode = "buy" | "sell";
+
+interface EarnLocationState {
+  tab?: TradeMode;
+  assetId?: string;
+}
 
 type ExecutionModalPhase =
   | "converting"
@@ -56,8 +69,51 @@ const INITIAL_EXECUTION_MODAL: ExecutionModalState = {
   canRetrySwap: false,
 };
 
+type LiquidationModalPhase =
+  | "swapping"
+  | "offramping"
+  | "complete"
+  | "timeout"
+  | "failed"
+  | "usdc_retained";
+
+interface LiquidationModalState {
+  open: boolean;
+  phase: LiquidationModalPhase;
+  assetName: string;
+  assetSymbol: string;
+  amountInAsset: number;
+  estimatedNgnPayout: string;
+  transactionId: string | null;
+  finalNgnPayout: number | null;
+  swapTxHash: string;
+  usdcTransferHash: string;
+  error: string | null;
+}
+
+const INITIAL_LIQUIDATION_MODAL: LiquidationModalState = {
+  open: false,
+  phase: "swapping",
+  assetName: "",
+  assetSymbol: "",
+  amountInAsset: 0,
+  estimatedNgnPayout: "",
+  transactionId: null,
+  finalNgnPayout: null,
+  swapTxHash: "",
+  usdcTransferHash: "",
+  error: null,
+};
+
 const POLL_INTERVAL_MS = 3500;
-const POLL_TIMEOUT_MS = 150000; // 2.5 minutes
+const POLL_TIMEOUT_MS = 150000;
+
+const SELL_PERCENT_CHIPS = [
+  { label: "25%", value: 0.25 },
+  { label: "50%", value: 0.5 },
+  { label: "75%", value: 0.75 },
+  { label: "Max", value: 1 },
+] as const;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -66,18 +122,38 @@ const sleep = (ms: number) =>
 
 export function Earn() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+
+  const routeState = (location.state as EarnLocationState | null) ?? null;
+  const searchParams = new URLSearchParams(location.search);
+  const initialTabParam = searchParams.get("tab");
+  const initialAssetParam = searchParams.get("asset");
+
   const { data: assets, isLoading: isAssetsLoading } = useEarnAssets();
+  const { data: balances } = useWalletBalances();
   const { data: userProfile, isLoading: isProfileLoading } = useProfile();
   const executeInvestmentMutation = useExecuteInvestment();
   const executeSwapMutation = useExecuteSwap();
+  const executeLiquidationMutation = useExecuteLiquidation();
   const onboardMutation = useOnboardUser();
-  const { currency, exchangeRate, buyRate } = useUIStore();
+  const { currency, exchangeRate, buyRate, sellRate } = useUIStore();
   const { user } = useAuthStore();
 
-  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [tradeMode, setTradeMode] = useState<TradeMode>(() =>
+    initialTabParam === "sell" || routeState?.tab === "sell" ? "sell" : "buy",
+  );
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(
+    () => initialAssetParam || routeState?.assetId || null,
+  );
+
+  // Buy state
   const [investmentAmount, setInvestmentAmount] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Sell / Liquidation state
+  const [sellAmount, setSellAmount] = useState<string>("");
+  const [sellErrorMessage, setSellErrorMessage] = useState<string | null>(null);
 
   // Vault Activation & Terms Dialog State
   const [showVaultModal, setShowVaultModal] = useState<boolean>(false);
@@ -87,18 +163,24 @@ export function Earn() {
   const [pendingInvestment, setPendingInvestment] =
     useState<InvestmentExecutePayload | null>(null);
 
-  // Single-Click Execution Progress Modal State
+  // Buy Execution Progress Modal State
   const [execModal, setExecModal] = useState<ExecutionModalState>(
     INITIAL_EXECUTION_MODAL,
   );
 
-  // Refs to guarantee polling cleanup and prevent Stage 2 double-firing
+  // Sell / Liquidation Progress Modal State
+  const [liqModal, setLiqModal] = useState<LiquidationModalState>(
+    INITIAL_LIQUIDATION_MODAL,
+  );
+
   const pollSessionRef = useRef<number>(0);
+  const liqPollSessionRef = useRef<number>(0);
   const stage2TriggeredRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     return () => {
       pollSessionRef.current += 1;
+      liqPollSessionRef.current += 1;
     };
   }, []);
 
@@ -131,6 +213,7 @@ export function Earn() {
 
   const effectiveBuyRate =
     buyRate > 0 ? buyRate : exchangeRate > 0 ? exchangeRate : 1600;
+  const effectiveSellRate = sellRate > 0 ? sellRate : effectiveBuyRate;
 
   const getMinDepositNgn = (asset: EarnAsset): number =>
     asset.minimum_deposit_ngn ??
@@ -143,9 +226,66 @@ export function Earn() {
     return `$${(asset.minimum_deposit_usd || 0).toLocaleString()}`;
   };
 
+  // Buy validation
   const amountNum = parseFloat(investmentAmount);
   const isInputValid = !isNaN(amountNum) && amountNum > 0;
-  const isButtonActive = isVerified && isInputValid;
+  const isBuyButtonActive = isVerified && isInputValid;
+
+  // Sell validation & debounced live quote
+  const availableAssetBalance = activeAsset
+    ? parseFloat(String(balances?.[activeAsset.id] ?? "0")) || 0
+    : 0;
+  const sellAmountNum = parseFloat(sellAmount);
+  const isSellInputPositive =
+    Number.isFinite(sellAmountNum) && sellAmountNum > 0;
+  const exceedsAvailableBalance =
+    isSellInputPositive && sellAmountNum > availableAssetBalance;
+  const shouldFetchLiquidationQuote =
+    tradeMode === "sell" &&
+    isVerified &&
+    Boolean(activeAsset?.id) &&
+    isSellInputPositive &&
+    !exceedsAvailableBalance;
+
+  const {
+    data: liquidationQuote,
+    isFetching: isQuoteFetching,
+    isDebouncing: isQuoteDebouncing,
+    error: liquidationQuoteError,
+  } = useLiquidationQuote(
+    activeAsset?.id,
+    shouldFetchLiquidationQuote ? sellAmountNum : 0,
+    shouldFetchLiquidationQuote,
+    500,
+  );
+
+  const isSellButtonActive =
+    isVerified &&
+    isSellInputPositive &&
+    !exceedsAvailableBalance &&
+    !isQuoteDebouncing &&
+    !isQuoteFetching &&
+    !liquidationQuoteError &&
+    Boolean(liquidationQuote?.quote) &&
+    !executeLiquidationMutation.isPending &&
+    !liqModal.open;
+
+  const handleSelectSellPercent = (pct: number) => {
+    setSellErrorMessage(null);
+    if (availableAssetBalance <= 0) return;
+
+    if (pct >= 1) {
+      setSellAmount(String(availableAssetBalance));
+      return;
+    }
+
+    const decimals = Math.min(activeAsset?.decimals || 6, 6);
+    const computed = parseFloat(
+      (availableAssetBalance * pct).toFixed(decimals),
+    );
+    const clamped = Math.min(computed, availableAssetBalance);
+    setSellAmount(clamped > 0 ? String(clamped) : "");
+  };
 
   const openVaultModal = (payload: InvestmentExecutePayload) => {
     setPendingInvestment(payload);
@@ -304,6 +444,140 @@ export function Earn() {
     }
   };
 
+  const pollLiquidationStatus = async (
+    transactionId: string,
+    sessionId: number,
+  ) => {
+    const startedAt = Date.now();
+
+    while (liqPollSessionRef.current === sessionId) {
+      try {
+        const txResponse = await fetchTransactions(25, 0);
+        if (liqPollSessionRef.current !== sessionId) return;
+
+        const tx = txResponse.transactions.find(
+          (item) => item.id === transactionId,
+        );
+
+        if (tx) {
+          const effStatus = getEffectiveStatus(tx);
+          const meta = tx.metadata as
+            | {
+                swap_tx_hash?: string;
+                usdc_transfer_hash?: string;
+                failure_reason?: string;
+              }
+            | undefined;
+
+          if (effStatus === "PROCESSING_ON_CHAIN_SWAP") {
+            setLiqModal((prev) => ({
+              ...prev,
+              phase: "swapping",
+              swapTxHash: meta?.swap_tx_hash || prev.swapTxHash,
+            }));
+          } else if (
+            effStatus === "AWAITING_BUSHA_DEPOSIT" ||
+            effStatus === "PROCESSING_FIAT_PAYOUT"
+          ) {
+            setLiqModal((prev) => ({
+              ...prev,
+              phase: "offramping",
+              swapTxHash: meta?.swap_tx_hash || prev.swapTxHash,
+              usdcTransferHash:
+                meta?.usdc_transfer_hash || prev.usdcTransferHash,
+            }));
+          } else if (isTransactionSuccess(effStatus)) {
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ["balances"],
+                refetchType: "all",
+              }),
+              queryClient.invalidateQueries({
+                queryKey: ["transactions"],
+                refetchType: "all",
+              }),
+            ]);
+            if (liqPollSessionRef.current !== sessionId) return;
+
+            const creditedNgn =
+              tx.currency === "NGN" ? Number(tx.amount || 0) : null;
+
+            setLiqModal((prev) => ({
+              ...prev,
+              phase: "complete",
+              finalNgnPayout: creditedNgn,
+              swapTxHash: meta?.swap_tx_hash || prev.swapTxHash,
+              usdcTransferHash:
+                meta?.usdc_transfer_hash || prev.usdcTransferHash,
+              error: null,
+            }));
+            setSellAmount("");
+            return;
+          } else if (effStatus === "failed_usdc_retained") {
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ["balances"],
+                refetchType: "all",
+              }),
+              queryClient.invalidateQueries({
+                queryKey: ["transactions"],
+                refetchType: "all",
+              }),
+            ]);
+            if (liqPollSessionRef.current !== sessionId) return;
+
+            setLiqModal((prev) => ({
+              ...prev,
+              phase: "usdc_retained",
+              swapTxHash: meta?.swap_tx_hash || prev.swapTxHash,
+              usdcTransferHash:
+                meta?.usdc_transfer_hash || prev.usdcTransferHash,
+              error:
+                meta?.failure_reason ||
+                "Your bond was swapped to USDC, but the NGN off-ramp failed. Your USDC is safely retained in your Ferrous Wallet.",
+            }));
+            setSellAmount("");
+            return;
+          } else if (isTransactionFailed(effStatus)) {
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ["balances"],
+                refetchType: "all",
+              }),
+              queryClient.invalidateQueries({
+                queryKey: ["transactions"],
+                refetchType: "all",
+              }),
+            ]);
+            if (liqPollSessionRef.current !== sessionId) return;
+
+            setLiqModal((prev) => ({
+              ...prev,
+              phase: "failed",
+              error:
+                meta?.failure_reason ||
+                "On-chain swap failed before completion. Your bond balance has been automatically restored.",
+            }));
+            return;
+          }
+        }
+      } catch {
+        // Ignore transient poll errors and retry on next interval
+      }
+
+      if (Date.now() - startedAt >= POLL_TIMEOUT_MS) {
+        if (liqPollSessionRef.current !== sessionId) return;
+        setLiqModal((prev) => ({
+          ...prev,
+          phase: "timeout",
+        }));
+        return;
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+  };
+
   const submitInvestment = async (
     payload: InvestmentExecutePayload,
     asset: EarnAsset,
@@ -397,6 +671,42 @@ export function Earn() {
     await submitInvestment(payload, activeAsset);
   };
 
+  const handleConfirmLiquidation = async () => {
+    if (!activeAsset || !isSellButtonActive) return;
+    setSellErrorMessage(null);
+
+    try {
+      const res = await executeLiquidationMutation.mutateAsync({
+        assetId: activeAsset.id,
+        amountInAsset: sellAmountNum,
+      });
+
+      const sessionId = liqPollSessionRef.current + 1;
+      liqPollSessionRef.current = sessionId;
+
+      setLiqModal({
+        open: true,
+        phase:
+          res.status === "AWAITING_BUSHA_DEPOSIT" ? "offramping" : "swapping",
+        assetName: activeAsset.name,
+        assetSymbol: activeAsset.symbol || activeAsset.name,
+        amountInAsset: sellAmountNum,
+        estimatedNgnPayout: liquidationQuote?.quote.net_ngn_payout || "",
+        transactionId: res.id,
+        finalNgnPayout: null,
+        swapTxHash: "",
+        usdcTransferHash: "",
+        error: null,
+      });
+
+      void pollLiquidationStatus(res.id, sessionId);
+    } catch (err: unknown) {
+      const errorMsg =
+        err instanceof Error ? err.message : "Failed to initiate liquidation.";
+      setSellErrorMessage(errorMsg);
+    }
+  };
+
   const handleActivateVault = async () => {
     if (!termsConsentChecked || onboardMutation.isPending) return;
     setOnboardError(null);
@@ -434,6 +744,11 @@ export function Earn() {
   const handleCloseExecModal = () => {
     pollSessionRef.current += 1;
     setExecModal(INITIAL_EXECUTION_MODAL);
+  };
+
+  const handleCloseLiqModal = () => {
+    liqPollSessionRef.current += 1;
+    setLiqModal(INITIAL_LIQUIDATION_MODAL);
   };
 
   const handleRetrySwapFromModal = async () => {
@@ -477,6 +792,7 @@ export function Earn() {
     }).format(finalValue);
   };
 
+  // Buy modal derived steps
   const step1Done =
     execModal.phase === "securing" ||
     execModal.phase === "complete" ||
@@ -485,6 +801,19 @@ export function Earn() {
   const step2Done = execModal.phase === "complete";
   const isModalInFlight =
     execModal.phase === "converting" || execModal.phase === "securing";
+
+  // Sell / Liquidation modal derived steps
+  const liqStep1Done =
+    liqModal.phase === "offramping" ||
+    liqModal.phase === "complete" ||
+    liqModal.phase === "usdc_retained";
+  const liqStep2Active = liqModal.phase === "offramping";
+  const liqStep2Done = liqModal.phase === "complete";
+  const isLiqInFlight =
+    liqModal.phase === "swapping" || liqModal.phase === "offramping";
+
+  const activeTokenPriceRate =
+    tradeMode === "sell" ? effectiveSellRate : effectiveBuyRate;
 
   return (
     <DashboardLayout>
@@ -508,6 +837,8 @@ export function Earn() {
                 ? (asset.live_pricing.annualized_yield_bps / 100).toFixed(2)
                 : "0.00";
               const isSelected = activeAsset?.id === asset.id;
+              const heldBalance =
+                parseFloat(String(balances?.[asset.id] ?? "0")) || 0;
 
               return (
                 <div
@@ -515,13 +846,23 @@ export function Earn() {
                   onClick={() => {
                     setSelectedAssetId(asset.id);
                     setErrorMessage(null);
+                    setSellErrorMessage(null);
+                    setSellAmount("");
                   }}
                   className={`rounded-3xl p-6 sm:p-7 text-white shadow-lg relative overflow-hidden transition-all duration-300 hover:-translate-y-1 cursor-pointer bg-gradient-to-r from-amber-700 via-amber-800 to-amber-950 border ${isSelected ? "ring-2 ring-primary" : "border-amber-600/30"}`}
                 >
                   <div className="relative z-10 flex flex-col justify-between h-full min-h-[160px]">
                     <div className="flex items-start justify-between">
-                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30 text-amber-300 font-bold uppercase">
-                        {(asset.symbol || "A").charAt(0)}
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30 text-amber-300 font-bold uppercase">
+                          {(asset.symbol || "A").charAt(0)}
+                        </div>
+                        {heldBalance > 0 && (
+                          <span className="px-2.5 py-1 rounded-full bg-white/15 border border-white/20 text-[10px] font-bold text-amber-100 font-mono">
+                            Held: {formatTokenQuantity(heldBalance)}{" "}
+                            {asset.symbol}
+                          </span>
+                        )}
                       </div>
                       <div className="text-right">
                         <span className="text-xs uppercase tracking-wider text-amber-200/90 font-semibold block">
@@ -602,7 +943,7 @@ export function Earn() {
                 <p className="text-base sm:text-lg font-black text-stone-900 tracking-tight truncate text-primary">
                   ~
                   {currency === "NGN"
-                    ? `₦${(Number(activeAsset.live_pricing?.cost_in_usd || 1) * effectiveBuyRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+                    ? `₦${(Number(activeAsset.live_pricing?.cost_in_usd || 1) * activeTokenPriceRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
                     : `$${Number(activeAsset.live_pricing?.cost_in_usd || 1).toFixed(3)}`}
                 </p>
               </div>
@@ -646,95 +987,323 @@ export function Earn() {
               <div
                 className={`bg-white rounded-3xl p-5 border border-stone-200/80 shadow-sm flex flex-col gap-4 transition-all duration-300 ${!isVerified ? "opacity-50 pointer-events-none select-none" : ""}`}
               >
-                <div className="flex items-center justify-between min-w-0">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="min-w-0">
-                      <h4 className="font-extrabold text-stone-900 leading-tight truncate">
-                        {activeAsset.name}
-                      </h4>
-                      <p className="text-[11px] font-medium text-stone-400 truncate">
-                        Min deposit: {formatMinDeposit(activeAsset)}
-                      </p>
+                {/* Buy | Sell Toggle */}
+                <div className="grid grid-cols-2 bg-stone-100 p-1 rounded-2xl border border-stone-200/60">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTradeMode("buy");
+                      setSellErrorMessage(null);
+                    }}
+                    className={`py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                      tradeMode === "buy"
+                        ? "bg-white text-stone-900 shadow-sm"
+                        : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    Buy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTradeMode("sell");
+                      setErrorMessage(null);
+                    }}
+                    className={`py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                      tradeMode === "sell"
+                        ? "bg-white text-stone-900 shadow-sm"
+                        : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    Sell / Redeem
+                  </button>
+                </div>
+
+                {tradeMode === "buy" ? (
+                  <>
+                    <div className="flex items-center justify-between min-w-0">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="min-w-0">
+                          <h4 className="font-extrabold text-stone-900 leading-tight truncate">
+                            {activeAsset.name}
+                          </h4>
+                          <p className="text-[11px] font-medium text-stone-400 truncate">
+                            Min deposit: {formatMinDeposit(activeAsset)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-2xl font-black text-stone-900 tracking-tight shrink-0 pl-2">
+                        +
+                        {activeAsset.live_pricing
+                          ? (
+                              activeAsset.live_pricing.annualized_yield_bps /
+                              100
+                            ).toFixed(2)
+                          : "0"}
+                        %
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-2xl font-black text-stone-900 tracking-tight shrink-0 pl-2">
-                    +
-                    {activeAsset.live_pricing
-                      ? (
-                          activeAsset.live_pricing.annualized_yield_bps / 100
-                        ).toFixed(2)
-                      : "0"}
-                    %
-                  </div>
-                </div>
 
-                <div className="bg-stone-50 rounded-2xl p-3 border border-stone-100 flex items-center justify-between">
-                  <div className="w-full">
-                    <span className="text-[10px] text-stone-400 font-bold uppercase block tracking-wider">
-                      Amount ({currency})
-                    </span>
-                    <input
-                      type="number"
-                      value={investmentAmount}
-                      onChange={(e) => {
-                        setErrorMessage(null);
-                        setInvestmentAmount(e.target.value);
-                      }}
-                      className="w-full bg-transparent text-xl font-extrabold text-stone-900 outline-none"
-                      placeholder={
-                        currency === "NGN"
-                          ? String(getMinDepositNgn(activeAsset))
-                          : String(activeAsset.minimum_deposit_usd || 10)
+                    <div className="bg-stone-50 rounded-2xl p-3 border border-stone-100 flex items-center justify-between">
+                      <div className="w-full">
+                        <span className="text-[10px] text-stone-400 font-bold uppercase block tracking-wider">
+                          Amount ({currency})
+                        </span>
+                        <input
+                          type="number"
+                          value={investmentAmount}
+                          onChange={(e) => {
+                            setErrorMessage(null);
+                            setInvestmentAmount(e.target.value);
+                          }}
+                          className="w-full bg-transparent text-xl font-extrabold text-stone-900 outline-none"
+                          placeholder={
+                            currency === "NGN"
+                              ? String(getMinDepositNgn(activeAsset))
+                              : String(activeAsset.minimum_deposit_usd || 10)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {errorMessage && (
+                      <div className="text-xs text-error font-medium px-2">
+                        {errorMessage}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleSupplyToPool}
+                      disabled={
+                        !isBuyButtonActive ||
+                        executeInvestmentMutation.isPending ||
+                        onboardMutation.isPending ||
+                        execModal.open
                       }
-                    />
-                  </div>
-                </div>
+                      className={`w-full py-3.5 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2
+                        ${
+                          isBuyButtonActive
+                            ? "bg-primary hover:bg-primary-container text-on-primary-container active:scale-[0.99] cursor-pointer shadow-amber-500/20"
+                            : "bg-stone-200 text-stone-400 cursor-not-allowed shadow-none"
+                        }
+                      `}
+                    >
+                      {executeInvestmentMutation.isPending ? (
+                        <>
+                          <span className="material-symbols-outlined animate-spin text-[18px]">
+                            progress_activity
+                          </span>
+                          <span>Initiating Order...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Supply to Pool</span>
+                          <span className="material-symbols-outlined text-[18px]">
+                            arrow_forward
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between min-w-0">
+                      <div className="min-w-0">
+                        <h4 className="font-extrabold text-stone-900 leading-tight truncate">
+                          Redeem {activeAsset.symbol}
+                        </h4>
+                        <p className="text-[11px] font-medium text-stone-500 truncate">
+                          Credits your Ferrous NGN wallet directly
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 pl-2">
+                        <span className="text-[10px] font-bold uppercase text-stone-400 block">
+                          Available
+                        </span>
+                        <span className="text-xs font-extrabold font-mono text-stone-900">
+                          {formatTokenQuantity(availableAssetBalance)}{" "}
+                          {activeAsset.symbol}
+                        </span>
+                      </div>
+                    </div>
 
-                {errorMessage && (
-                  <div className="text-xs text-error font-medium px-2">
-                    {errorMessage}
-                  </div>
+                    <div className="bg-stone-50 rounded-2xl p-3 border border-stone-100 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="w-full">
+                          <span className="text-[10px] text-stone-400 font-bold uppercase block tracking-wider">
+                            Amount ({activeAsset.symbol})
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={sellAmount}
+                            onChange={(e) => {
+                              setSellErrorMessage(null);
+                              setSellAmount(e.target.value);
+                            }}
+                            disabled={availableAssetBalance <= 0}
+                            className="w-full bg-transparent text-xl font-extrabold text-stone-900 outline-none disabled:opacity-50"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {SELL_PERCENT_CHIPS.map((chip) => (
+                          <button
+                            key={chip.label}
+                            type="button"
+                            disabled={availableAssetBalance <= 0}
+                            onClick={() => handleSelectSellPercent(chip.value)}
+                            className="py-1.5 rounded-xl bg-white hover:bg-stone-200/80 border border-stone-200 text-[11px] font-bold text-stone-700 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {chip.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {availableAssetBalance <= 0 && (
+                      <div className="p-3 rounded-2xl bg-stone-50 border border-dashed border-stone-200 text-xs text-stone-500 font-medium text-center">
+                        You do not currently hold any {activeAsset.symbol} to
+                        redeem.
+                      </div>
+                    )}
+
+                    {exceedsAvailableBalance && (
+                      <div className="p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700 font-bold">
+                        Amount exceeds your available balance of{" "}
+                        {formatTokenQuantity(availableAssetBalance)}{" "}
+                        {activeAsset.symbol}.
+                      </div>
+                    )}
+
+                    {/* Live Liquidation Quote Card */}
+                    {shouldFetchLiquidationQuote &&
+                      (isQuoteDebouncing || isQuoteFetching) && (
+                        <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 text-xs font-semibold text-stone-600">
+                          <span className="material-symbols-outlined animate-spin text-[16px] text-primary">
+                            progress_activity
+                          </span>
+                          <span>Fetching live liquidation quote...</span>
+                        </div>
+                      )}
+
+                    {shouldFetchLiquidationQuote &&
+                      !isQuoteDebouncing &&
+                      !isQuoteFetching &&
+                      liquidationQuoteError && (
+                        <div className="p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700 font-bold">
+                          {liquidationQuoteError instanceof Error
+                            ? liquidationQuoteError.message
+                            : "Unable to quote liquidation for this amount."}
+                        </div>
+                      )}
+
+                    {shouldFetchLiquidationQuote &&
+                      !isQuoteDebouncing &&
+                      !isQuoteFetching &&
+                      !liquidationQuoteError &&
+                      liquidationQuote?.quote && (
+                        <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-stone-500 font-medium">
+                              Estimated USDC Recovered
+                            </span>
+                            <span className="font-bold font-mono text-stone-900">
+                              $
+                              {Number(
+                                liquidationQuote.quote.estimated_usdc_recovered,
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 6,
+                              })}{" "}
+                              USDC
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-stone-500 font-medium">
+                              Applied Sell Rate
+                            </span>
+                            <span className="font-bold font-mono text-stone-900">
+                              ₦
+                              {Number(
+                                liquidationQuote.quote.applied_exchange_rate,
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}{" "}
+                              / USD
+                            </span>
+                          </div>
+
+                          <div className="pt-2 border-t border-stone-200 flex items-center justify-between">
+                            <span className="font-bold text-stone-700">
+                              Estimated NGN Payout
+                            </span>
+                            <span className="text-sm font-black text-emerald-700 font-mono">
+                              ₦
+                              {Number(
+                                liquidationQuote.quote.net_ngn_payout,
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+
+                          {liquidationQuote.disclaimer && (
+                            <p className="text-[10px] text-stone-400 leading-relaxed pt-1">
+                              {liquidationQuote.disclaimer}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                    {sellErrorMessage && (
+                      <div className="text-xs text-error font-medium px-2">
+                        {sellErrorMessage}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleConfirmLiquidation}
+                      disabled={!isSellButtonActive}
+                      className={`w-full py-3.5 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2
+                        ${
+                          isSellButtonActive
+                            ? "bg-stone-900 hover:bg-black text-white active:scale-[0.99] cursor-pointer"
+                            : "bg-stone-200 text-stone-400 cursor-not-allowed shadow-none"
+                        }
+                      `}
+                    >
+                      {executeLiquidationMutation.isPending ? (
+                        <>
+                          <span className="material-symbols-outlined animate-spin text-[18px]">
+                            progress_activity
+                          </span>
+                          <span>Submitting Liquidation...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Redeem to NGN Wallet</span>
+                          <span className="material-symbols-outlined text-[18px]">
+                            arrow_forward
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </>
                 )}
-
-                <button
-                  onClick={handleSupplyToPool}
-                  disabled={
-                    !isButtonActive ||
-                    executeInvestmentMutation.isPending ||
-                    onboardMutation.isPending ||
-                    execModal.open
-                  }
-                  className={`w-full py-3.5 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2
-                    ${
-                      isButtonActive
-                        ? "bg-primary hover:bg-primary-container text-on-primary-container active:scale-[0.99] cursor-pointer shadow-amber-500/20"
-                        : "bg-stone-200 text-stone-400 cursor-not-allowed shadow-none"
-                    }
-                  `}
-                >
-                  {executeInvestmentMutation.isPending ? (
-                    <>
-                      <span className="material-symbols-outlined animate-spin text-[18px]">
-                        progress_activity
-                      </span>
-                      <span>Initiating Order...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Supply to Pool</span>
-                      <span className="material-symbols-outlined text-[18px]">
-                        arrow_forward
-                      </span>
-                    </>
-                  )}
-                </button>
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* LIVE SINGLE-CLICK INVESTMENT PROGRESS MODAL */}
+      {/* LIVE SINGLE-CLICK INVESTMENT PROGRESS MODAL (BUY) */}
       {execModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -829,7 +1398,6 @@ export function Earn() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {/* Step 1 */}
                   <div
                     className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
                       step1Done
@@ -869,7 +1437,6 @@ export function Earn() {
                     )}
                   </div>
 
-                  {/* Step 2 */}
                   <div
                     className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
                       step2Done
@@ -997,6 +1564,297 @@ export function Earn() {
               ) : (
                 <button
                   onClick={handleCloseExecModal}
+                  className="w-full py-2.5 text-stone-500 hover:text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  Run in Background
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LIVE LIQUIDATION PROGRESS MODAL (SELL / REDEEM) */}
+      {liqModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-stone-100 flex items-start justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                    liqModal.phase === "complete"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : liqModal.phase === "failed" ||
+                          liqModal.phase === "usdc_retained"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-primary/15 text-primary"
+                  }`}
+                >
+                  <span
+                    className={`material-symbols-outlined text-[20px] ${isLiqInFlight ? "animate-spin" : ""}`}
+                  >
+                    {liqModal.phase === "complete"
+                      ? "check_circle"
+                      : liqModal.phase === "failed"
+                        ? "error"
+                        : liqModal.phase === "usdc_retained"
+                          ? "warning"
+                          : liqModal.phase === "timeout"
+                            ? "schedule"
+                            : "progress_activity"}
+                  </span>
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-stone-900">
+                    {liqModal.phase === "complete"
+                      ? "Liquidation Complete"
+                      : liqModal.phase === "usdc_retained"
+                        ? "USDC Retained in Wallet"
+                        : liqModal.phase === "failed"
+                          ? "Liquidation Failed"
+                          : liqModal.phase === "timeout"
+                            ? "Still Processing"
+                            : `Redeeming ${liqModal.assetSymbol}`}
+                  </h2>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    {formatTokenQuantity(liqModal.amountInAsset)}{" "}
+                    {liqModal.assetSymbol} → Ferrous NGN Wallet
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCloseLiqModal}
+                className="w-8 h-8 rounded-full bg-stone-200 hover:bg-stone-300 text-stone-600 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  close
+                </span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {liqModal.phase === "complete" ? (
+                <div className="space-y-4">
+                  <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 text-center space-y-1">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+                      Credited to Ferrous NGN Wallet
+                    </p>
+                    <p className="text-2xl font-black text-emerald-900 font-mono">
+                      +₦
+                      {(
+                        liqModal.finalNgnPayout ??
+                        (Number(liqModal.estimatedNgnPayout) || 0)
+                      ).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                  </div>
+
+                  {(liqModal.swapTxHash || liqModal.usdcTransferHash) && (
+                    <div className="space-y-2">
+                      {liqModal.swapTxHash && (
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-stone-50 border border-stone-200 text-xs">
+                          <span className="font-bold text-stone-500">
+                            DEX Swap Proof
+                          </span>
+                          <a
+                            href={`https://solscan.io/tx/${liqModal.swapTxHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono font-bold text-primary hover:underline flex items-center gap-1"
+                          >
+                            {liqModal.swapTxHash.substring(0, 12)}...
+                            <span className="material-symbols-outlined text-[14px]">
+                              open_in_new
+                            </span>
+                          </a>
+                        </div>
+                      )}
+                      {liqModal.usdcTransferHash && (
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-stone-50 border border-stone-200 text-xs">
+                          <span className="font-bold text-stone-500">
+                            USDC Off-Ramp Proof
+                          </span>
+                          <a
+                            href={`https://solscan.io/tx/${liqModal.usdcTransferHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono font-bold text-primary hover:underline flex items-center gap-1"
+                          >
+                            {liqModal.usdcTransferHash.substring(0, 12)}...
+                            <span className="material-symbols-outlined text-[14px]">
+                              open_in_new
+                            </span>
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Step 1: PROCESSING_ON_CHAIN_SWAP */}
+                  <div
+                    className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                      liqStep1Done
+                        ? "bg-emerald-50/60 border-emerald-200"
+                        : liqModal.phase === "failed"
+                          ? "bg-red-50/50 border-red-200"
+                          : "bg-amber-50/60 border-amber-200"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${
+                          liqStep1Done
+                            ? "bg-emerald-600 text-white"
+                            : liqModal.phase === "failed"
+                              ? "bg-red-200 text-red-800"
+                              : "bg-amber-400 text-stone-950 animate-pulse"
+                        }`}
+                      >
+                        {liqStep1Done ? "✓" : "1"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-stone-900">
+                          Swapping {liqModal.assetSymbol} to USDC on Solana
+                        </p>
+                        <p className="text-[11px] text-stone-500">
+                          {liqStep1Done
+                            ? "On-chain swap confirmed"
+                            : "Executing DEX liquidity swap"}
+                        </p>
+                      </div>
+                    </div>
+                    {liqModal.phase === "swapping" && (
+                      <span className="material-symbols-outlined animate-spin text-[18px] text-amber-600 shrink-0">
+                        progress_activity
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Step 2: AWAITING_BUSHA_DEPOSIT */}
+                  <div
+                    className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                      liqStep2Done
+                        ? "bg-emerald-50/60 border-emerald-200"
+                        : liqStep2Active
+                          ? "bg-amber-50/60 border-amber-200"
+                          : liqModal.phase === "usdc_retained"
+                            ? "bg-red-50/50 border-red-200"
+                            : "bg-stone-50 border-dashed border-stone-200 opacity-60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${
+                          liqStep2Done
+                            ? "bg-emerald-600 text-white"
+                            : liqStep2Active
+                              ? "bg-amber-400 text-stone-950 animate-pulse"
+                              : liqModal.phase === "usdc_retained"
+                                ? "bg-red-200 text-red-800"
+                                : "bg-stone-200 text-stone-600"
+                        }`}
+                      >
+                        {liqStep2Done ? "✓" : "2"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-stone-900">
+                          Converting USDC to NGN
+                        </p>
+                        <p className="text-[11px] text-stone-500">
+                          {liqStep2Active
+                            ? "Crediting your Ferrous NGN wallet"
+                            : liqModal.phase === "usdc_retained"
+                              ? "Off-ramp failed — USDC retained safely"
+                              : "Waiting for Solana swap"}
+                        </p>
+                      </div>
+                    </div>
+                    {liqStep2Active && (
+                      <span className="material-symbols-outlined animate-spin text-[18px] text-amber-600 shrink-0">
+                        progress_activity
+                      </span>
+                    )}
+                  </div>
+
+                  {isLiqInFlight && (
+                    <p className="text-[11px] text-stone-500 text-center pt-1">
+                      Usually settles in ~10–15 seconds. You can safely close
+                      this modal—settlement continues automatically in the
+                      background.
+                    </p>
+                  )}
+
+                  {liqModal.phase === "timeout" && (
+                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900 leading-relaxed">
+                      Settlement is taking slightly longer than usual—you can
+                      safely close this window and track progress in your
+                      Transactions tab.
+                    </div>
+                  )}
+
+                  {(liqModal.phase === "failed" ||
+                    liqModal.phase === "usdc_retained") &&
+                    liqModal.error && (
+                      <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-xs font-bold text-red-700 leading-relaxed">
+                        {liqModal.error}
+                      </div>
+                    )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center gap-3">
+              {liqModal.phase === "complete" ||
+              liqModal.phase === "usdc_retained" ? (
+                <>
+                  <button
+                    onClick={handleCloseLiqModal}
+                    className="px-4 py-3 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Stay Here
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleCloseLiqModal();
+                      navigate("/transfers");
+                    }}
+                    className="flex-1 py-3 bg-primary hover:bg-primary-container text-[#FFFFFF] font-extrabold text-xs rounded-xl shadow-sm transition cursor-pointer"
+                  >
+                    View Ferrous Wallet
+                  </button>
+                </>
+              ) : liqModal.phase === "timeout" ? (
+                <>
+                  <button
+                    onClick={handleCloseLiqModal}
+                    className="px-4 py-3 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleCloseLiqModal();
+                      navigate("/transactions");
+                    }}
+                    className="flex-1 py-3 bg-stone-900 hover:bg-black text-[#FFFFFF] font-extrabold text-xs rounded-xl transition cursor-pointer"
+                  >
+                    Go to Transactions
+                  </button>
+                </>
+              ) : liqModal.phase === "failed" ? (
+                <button
+                  onClick={handleCloseLiqModal}
+                  className="w-full py-3 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              ) : (
+                <button
+                  onClick={handleCloseLiqModal}
                   className="w-full py-2.5 text-stone-500 hover:text-stone-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
                 >
                   Run in Background

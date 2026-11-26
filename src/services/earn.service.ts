@@ -1,4 +1,5 @@
 // src/services/earn.service.ts
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
 import { useUIStore } from "../store/uiStore";
@@ -11,6 +12,10 @@ import type {
   InvestmentQuoteResponse,
   InvestmentExecutePayload,
   InvestmentExecuteResponse,
+  LiquidationQuotePayload,
+  LiquidationQuoteResponse,
+  LiquidationExecutePayload,
+  LiquidationExecuteResponse,
 } from "../types/earn";
 
 const unwrapAxiosBody = (res: unknown): Record<string, unknown> => {
@@ -160,6 +165,64 @@ const earnApi = {
           : "Bond asset purchased and secured in your wallet.",
     };
   },
+
+  getLiquidationQuote: async (
+    payload: LiquidationQuotePayload,
+  ): Promise<LiquidationQuoteResponse> => {
+    const res = await apiClient.post<unknown, unknown>(
+      "/liquidations/quote",
+      {
+        assetId: payload.assetId,
+        amountInAsset: Number(payload.amountInAsset),
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    return unwrapPayload<LiquidationQuoteResponse>(res);
+  },
+
+  executeLiquidation: async (
+    payload: LiquidationExecutePayload,
+  ): Promise<LiquidationExecuteResponse> => {
+    const res = await apiClient.post<unknown, unknown>(
+      "/liquidations/execute",
+      {
+        assetId: payload.assetId,
+        amountInAsset: Number(payload.amountInAsset),
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    const body = unwrapAxiosBody(res);
+    const inner = (body.data as Record<string, unknown> | undefined) ?? body;
+
+    if (typeof inner.id !== "string" || !inner.id) {
+      throw new Error(
+        "Liquidation accepted, but no transaction ID was returned.",
+      );
+    }
+
+    return {
+      id: inner.id,
+      reference: typeof inner.reference === "string" ? inner.reference : "",
+      status:
+        typeof inner.status === "string"
+          ? inner.status
+          : "PROCESSING_ON_CHAIN_SWAP",
+      created_at:
+        typeof inner.created_at === "string"
+          ? inner.created_at
+          : new Date().toISOString(),
+      message: typeof body.message === "string" ? body.message : undefined,
+    };
+  },
 };
 
 export const useEarnAssets = () =>
@@ -198,6 +261,68 @@ export const useExecuteSwap = () => {
   return useMutation({
     mutationFn: (transactionId: string) =>
       earnApi.executeSwapFinalization(transactionId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["balances"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["transactions"],
+          refetchType: "all",
+        }),
+      ]);
+    },
+  });
+};
+
+export const useLiquidationQuote = (
+  assetId: string | undefined,
+  amountInAsset: number,
+  enabled: boolean,
+  debounceMs = 500,
+) => {
+  const [debouncedAmount, setDebouncedAmount] = useState<number>(amountInAsset);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedAmount(amountInAsset);
+    }, debounceMs);
+
+    return () => window.clearTimeout(timer);
+  }, [amountInAsset, debounceMs]);
+
+  const isAmountValid = Number.isFinite(debouncedAmount) && debouncedAmount > 0;
+  const isDebouncing =
+    enabled &&
+    Number.isFinite(amountInAsset) &&
+    amountInAsset > 0 &&
+    amountInAsset !== debouncedAmount;
+
+  const query = useQuery({
+    queryKey: ["liquidation-quote", assetId, debouncedAmount],
+    queryFn: () =>
+      earnApi.getLiquidationQuote({
+        assetId: assetId as string,
+        amountInAsset: debouncedAmount,
+      }),
+    enabled: Boolean(enabled && assetId && isAmountValid),
+    retry: false,
+    staleTime: 15000,
+  });
+
+  return {
+    ...query,
+    isDebouncing,
+  };
+};
+
+export const useExecuteLiquidation = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: LiquidationExecutePayload) =>
+      earnApi.executeLiquidation(payload),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({

@@ -610,7 +610,7 @@ export function Transfers() {
                   return (
                     <div
                       key={holding.id}
-                      className="flex items-center justify-between text-xs bg-white/5 rounded-xl px-3 py-2 border border-white/5"
+                      className="flex items-center justify-between gap-2 text-xs bg-white/5 rounded-xl px-3 py-2 border border-white/5"
                     >
                       <div className="min-w-0">
                         <p className="font-bold text-white truncate">
@@ -621,11 +621,29 @@ export function Transfers() {
                           {holding.symbol}
                         </p>
                       </div>
-                      <span className="font-extrabold text-amber-200 shrink-0 pl-2">
-                        {holding.hasValuation
-                          ? formatFiat(holdingFiat, currency)
-                          : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0 pl-2">
+                        <span className="font-extrabold text-amber-200">
+                          {holding.hasValuation
+                            ? formatFiat(holdingFiat, currency)
+                            : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
+                        </span>
+                        {holding.asset && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              navigate(
+                                `/earn?tab=sell&asset=${encodeURIComponent(holding.id)}`,
+                                {
+                                  state: { tab: "sell", assetId: holding.id },
+                                },
+                              )
+                            }
+                            className="px-2 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-300/30 text-[10px] font-bold text-amber-200 transition-colors cursor-pointer"
+                          >
+                            Redeem / Sell
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

@@ -44,3 +44,37 @@ export interface ExecuteSwapResponse {
   bondOutputTokens: string;
   message?: string;
 }
+
+export interface LiquidationQuotePayload {
+  assetId: string;
+  amountInAsset: number;
+}
+
+export interface LiquidationQuoteDetails {
+  input_asset_amount: number;
+  estimated_usdc_recovered: string;
+  applied_exchange_rate: string;
+  net_ngn_payout: string;
+}
+
+export interface LiquidationQuoteResponse {
+  asset: {
+    id: string;
+    chain: string;
+  };
+  quote: LiquidationQuoteDetails;
+  disclaimer?: string;
+}
+
+export interface LiquidationExecutePayload {
+  assetId: string;
+  amountInAsset: number;
+}
+
+export interface LiquidationExecuteResponse {
+  id: string;
+  reference: string;
+  status: string;
+  created_at: string;
+  message?: string;
+}

@@ -167,10 +167,9 @@ export function Dashboard() {
               currency === "NGN" ? holding.ngnValue : holding.usdValue;
 
             return (
-              <Link
+              <div
                 key={holding.id}
-                to="/earn"
-                className="bg-surface-container-lowest hover:bg-surface-container-low transition-all duration-200 p-space-md sm:px-space-lg sm:py-space-md rounded-lg shadow-sm flex items-center justify-between group cursor-pointer"
+                className="bg-surface-container-lowest hover:bg-surface-container-low transition-all duration-200 p-space-md sm:px-space-lg sm:py-space-md rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
                 <div className="flex items-center gap-space-md min-w-0">
                   <div className="w-12 h-12 rounded-2xl bg-surface-container flex items-center justify-center shrink-0 text-primary font-bold uppercase">
@@ -178,7 +177,7 @@ export function Dashboard() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-headline-sm text-headline-sm text-on-surface tracking-tight group-hover:text-primary transition-colors truncate">
+                      <h3 className="font-headline-sm text-headline-sm text-on-surface tracking-tight truncate">
                         {holding.name}
                       </h3>
                       {holding.apyPercent && (
@@ -192,17 +191,31 @@ export function Dashboard() {
                     </span>
                   </div>
                 </div>
-                <div className="text-right shrink-0 pl-3">
-                  <span className="font-label-lg text-label-lg text-on-surface font-extrabold block">
-                    {holding.hasValuation
-                      ? formatMoney(holdingDisplayValue, currency)
-                      : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
-                  </span>
-                  <span className="font-body-sm text-body-sm text-on-surface-variant font-mono">
-                    {formatTokenQuantity(holding.tokenBalance)} {holding.symbol}
-                  </span>
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pl-16 sm:pl-3">
+                  <div className="text-left sm:text-right">
+                    <span className="font-label-lg text-label-lg text-on-surface font-extrabold block">
+                      {holding.hasValuation
+                        ? formatMoney(holdingDisplayValue, currency)
+                        : `${formatTokenQuantity(holding.tokenBalance)} ${holding.symbol}`}
+                    </span>
+                    <span className="font-body-sm text-body-sm text-on-surface-variant font-mono">
+                      {formatTokenQuantity(holding.tokenBalance)}{" "}
+                      {holding.symbol}
+                    </span>
+                  </div>
+
+                  {holding.asset && (
+                    <Link
+                      to={`/earn?tab=sell&asset=${encodeURIComponent(holding.id)}`}
+                      state={{ tab: "sell", assetId: holding.id }}
+                      className="px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-black text-white text-xs font-bold transition-colors shrink-0 cursor-pointer"
+                    >
+                      Redeem / Sell
+                    </Link>
+                  )}
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>
